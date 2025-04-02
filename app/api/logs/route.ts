@@ -41,26 +41,20 @@ export async function GET(request: Request) {
     const logs = await prisma.log.findMany({
       where,
       orderBy: {
-        timestamp: 'desc', // Fetch newest first
+        timestamp: 'desc', // Fetch oldest first
       },
       take: limit,
     });
 
-    // Sort logs in ascending order for display
-    const sortedLogs = [...logs].reverse();
-
-    // Get the cursor for the next page
+    // Get the oldest timestamp for cursor-based pagination
     const nextCursor = logs.length > 0 ? logs[logs.length - 1].timestamp.toISOString() : null;
 
     // Return logs with pagination info
     return NextResponse.json({
-      logs: sortedLogs,
-      pagination: {
-        total,
-        limit,
-        nextCursor,
-        hasMore: logs.length === limit,
-      },
+      logs: logs.reverse(),
+      total,
+      pages: Math.ceil(total / limit),
+      nextCursor,
     });
   } catch (error) {
     console.error('Error fetching logs:', error);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 
 type Log = {
@@ -14,9 +14,8 @@ type Log = {
 
 type Pagination = {
   total: number;
-  page: number;
   limit: number;
-  pages: number;
+  nextCursor?: string;
 };
 
 export default function AgentClient() {
@@ -26,31 +25,41 @@ export default function AgentClient() {
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<Pagination>({
     total: 0,
-    page: 1,
-    limit: 50,
-    pages: 0,
+    limit: 10,
   });
   const [filter, setFilter] = useState({
     source: '',
     level: '',
   });
+  const logsContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch logs
-  const fetchLogs = async () => {
+  // Fetch logs - handles both initial load and loading more
+  const fetchLogs = async (initial: boolean = false) => {
     if (!session) return;
 
     setIsLoading(true);
     setError(null);
 
+    if (initial || !pagination.nextCursor) {
+      setLogs([]);
+      // Reset cursor when doing an initial load
+      setPagination(prev => ({ ...prev, nextCursor: undefined }));
+    }
+
     try {
       // Build query string
       const params = new URLSearchParams({
-        page: pagination.page.toString(),
         limit: pagination.limit.toString(),
       });
 
+      // Add filter parameters if set
       if (filter.source) params.append('source', filter.source);
       if (filter.level) params.append('level', filter.level);
+
+      // Add cursor for "Load More" functionality
+      if (pagination.nextCursor) {
+        params.append('before', pagination.nextCursor);
+      }
 
       const response = await fetch(`/api/logs?${params.toString()}`);
 
@@ -59,33 +68,44 @@ export default function AgentClient() {
       }
 
       const data = await response.json();
-      setLogs(data.logs);
-      setPagination(data.pagination);
+      console.log('Fetched logs:', data);
+
+      // Add new logs to the beginning of the array (older logs first)
+      setLogs(prev => [...data.logs, ...prev]);
+
+      // Update pagination info
+      setPagination(prev => ({
+        ...prev,
+        total: data.total,
+        nextCursor: data.nextCursor,
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
-      console.error('Error fetching logs:', err);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Handle page change
-  const handlePageChange = (newPage: number) => {
-    setPagination(prev => ({ ...prev, page: newPage }));
   };
 
   // Handle filter change
   const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFilter(prev => ({ ...prev, [name]: value }));
-    setPagination(prev => ({ ...prev, page: 1 })); // Reset to first page when filter changes
+    // Reset and do an initial load when filter changes
+    fetchLogs(true);
   };
 
-  // Fetch logs on mount and when dependencies change
+  // Fetch logs on mount
   useEffect(() => {
-    fetchLogs();
+    fetchLogs(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
+
+  // Scroll to bottom of logs after initial load
+  useEffect(() => {
+    if (!isLoading && logs.length > 0 && logsContainerRef.current) {
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+    }
+  }, [isLoading, logs]);
 
   // Format timestamp
   const formatTimestamp = (timestamp: string) => {
@@ -144,7 +164,7 @@ export default function AgentClient() {
 
         <div className="flex items-end">
           <button
-            onClick={() => fetchLogs()}
+            onClick={() => fetchLogs(true)}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             Refresh
@@ -172,7 +192,23 @@ export default function AgentClient() {
       ) : (
         <>
           {/* Logs table */}
-          <div className="overflow-x-auto">
+          <div
+            ref={logsContainerRef}
+            className="overflow-x-auto max-h-[70vh] overflow-y-auto"
+          >
+            {/* Load More button at the top */}
+            {pagination.nextCursor && (
+              <div className="sticky top-0 z-10 bg-white py-2 text-center border-b">
+                <button
+                  onClick={() => fetchLogs()}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Loading...' : 'Load Previous Logs'}
+                </button>
+              </div>
+            )}
+
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -206,93 +242,6 @@ export default function AgentClient() {
               </tbody>
             </table>
           </div>
-
-          {/* Pagination */}
-          {pagination.pages > 1 && (
-            <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 mt-4">
-              <div className="flex flex-1 justify-between sm:hidden">
-                <button
-                  onClick={() => handlePageChange(Math.max(1, pagination.page - 1))}
-                  disabled={pagination.page === 1}
-                  className={`relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium ${pagination.page === 1 ? 'text-gray-300' : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                >
-                  Previous
-                </button>
-                <button
-                  onClick={() => handlePageChange(Math.min(pagination.pages, pagination.page + 1))}
-                  disabled={pagination.page === pagination.pages}
-                  className={`relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium ${pagination.page === pagination.pages ? 'text-gray-300' : 'text-gray-700 hover:bg-gray-50'
-                    }`}
-                >
-                  Next
-                </button>
-              </div>
-              <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm text-gray-700">
-                    Showing <span className="font-medium">{((pagination.page - 1) * pagination.limit) + 1}</span> to{' '}
-                    <span className="font-medium">
-                      {Math.min(pagination.page * pagination.limit, pagination.total)}
-                    </span>{' '}
-                    of <span className="font-medium">{pagination.total}</span> results
-                  </p>
-                </div>
-                <div>
-                  <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
-                    <button
-                      onClick={() => handlePageChange(Math.max(1, pagination.page - 1))}
-                      disabled={pagination.page === 1}
-                      className={`relative inline-flex items-center rounded-l-md px-2 py-2 ${pagination.page === 1 ? 'text-gray-300' : 'text-gray-400 hover:bg-gray-50'
-                        }`}
-                    >
-                      <span className="sr-only">Previous</span>
-                      &larr;
-                    </button>
-
-                    {/* Page numbers */}
-                    {Array.from({ length: Math.min(5, pagination.pages) }, (_, i) => {
-                      let pageNum;
-
-                      // Logic to show pages around current page
-                      if (pagination.pages <= 5) {
-                        pageNum = i + 1;
-                      } else if (pagination.page <= 3) {
-                        pageNum = i + 1;
-                      } else if (pagination.page >= pagination.pages - 2) {
-                        pageNum = pagination.pages - 4 + i;
-                      } else {
-                        pageNum = pagination.page - 2 + i;
-                      }
-
-                      return (
-                        <button
-                          key={pageNum}
-                          onClick={() => handlePageChange(pageNum)}
-                          className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${pagination.page === pageNum
-                            ? 'z-10 bg-indigo-600 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
-                            : 'text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:outline-offset-0'
-                            }`}
-                        >
-                          {pageNum}
-                        </button>
-                      );
-                    })}
-
-                    <button
-                      onClick={() => handlePageChange(Math.min(pagination.pages, pagination.page + 1))}
-                      disabled={pagination.page === pagination.pages}
-                      className={`relative inline-flex items-center rounded-r-md px-2 py-2 ${pagination.page === pagination.pages ? 'text-gray-300' : 'text-gray-400 hover:bg-gray-50'
-                        }`}
-                    >
-                      <span className="sr-only">Next</span>
-                      &rarr;
-                    </button>
-                  </nav>
-                </div>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>

@@ -54,6 +54,22 @@ services:
     networks:
       - inbox-network
 
+  agent-server:
+    build:
+      context: ./agent-server
+      dockerfile: Dockerfile
+    container_name: gobi-inbox-agent-server
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - FLASK_DEBUG=false
+      - PORT=8080
+    depends_on:
+      - web
+    networks:
+      - inbox-network
+
 networks:
   inbox-network:
     driver: bridge

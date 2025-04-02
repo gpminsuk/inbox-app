@@ -2,19 +2,35 @@
 
 import { useState } from 'react';
 import { format } from 'date-fns';
-import { InboxEntry } from '@/types';
+import { InboxEntry, Action } from '@/types';
 
 interface EntryCardProps {
   entry: InboxEntry;
   onDelete: (id: string) => void;
   onUpdateAction: (id: string, data: { completed: boolean }) => void;
   onExecuteAction: (id: string) => void;
+  renderAgentResults?: (action: Action) => React.ReactNode;
 }
 
-export default function EntryCard({ entry, onDelete, onUpdateAction, onExecuteAction }: EntryCardProps) {
+export default function EntryCard({ entry, onDelete, onUpdateAction, onExecuteAction, renderAgentResults }: EntryCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [expandedActionId, setExpandedActionId] = useState<string | null>(null);
 
   const pendingActions = entry.actions.filter(action => !action.completed).length;
+
+  // Function to generate Gmail URL from message ID
+  const getGmailUrl = (messageId: string) => {
+    return `https://mail.google.com/mail/u/0/#inbox/${messageId}`;
+  };
+
+  // Function to toggle action details
+  const toggleActionDetails = (actionId: string) => {
+    if (expandedActionId === actionId) {
+      setExpandedActionId(null);
+    } else {
+      setExpandedActionId(actionId);
+    }
+  };
 
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden">
@@ -49,6 +65,18 @@ export default function EntryCard({ entry, onDelete, onUpdateAction, onExecuteAc
 
         <div className="text-sm text-gray-500 mb-3">
           Created: {format(entry.createdAt, 'MMM d, yyyy')}
+          {entry.emailId && (
+            <span className="ml-2">
+              <a
+                href={getGmailUrl(entry.emailId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-500 hover:text-blue-700"
+              >
+                View in Gmail
+              </a>
+            </span>
+          )}
         </div>
 
         <div className="mb-4">
@@ -61,28 +89,88 @@ export default function EntryCard({ entry, onDelete, onUpdateAction, onExecuteAc
           {entry.actions.length > 0 && (
             <div className="bg-gray-50 p-3 rounded">
               {entry.actions.slice(0, expanded ? entry.actions.length : 2).map(action => (
-                <div key={action.id} className="flex items-center py-1">
-                  <input
-                    type="checkbox"
-                    checked={action.completed}
-                    onChange={() => onUpdateAction(action.id, { completed: !action.completed })}
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                  />
-                  <span className={`ml-2 text-sm ${action.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
-                    {action.description}
-                  </span>
-                  {action.dueDate && (
-                    <span className="ml-auto text-xs text-gray-500">
-                      Due: {format(action.dueDate, 'MMM d, yyyy')}
+                <div key={action.id} className="flex flex-col py-1">
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={action.completed}
+                      onChange={() => onUpdateAction(action.id, { completed: !action.completed })}
+                      className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                    />
+                    <span className={`ml-2 text-sm ${action.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
+                      {action.description}
                     </span>
-                  )}
-                  {!action.completed && (
-                    <button
-                      onClick={() => onExecuteAction(action.id)}
-                      className="ml-auto px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
-                    >
-                      Execute
-                    </button>
+                    {action.dueDate && (
+                      <span className="ml-auto text-xs text-gray-500">
+                        Due: {format(action.dueDate, 'MMM d, yyyy')}
+                      </span>
+                    )}
+                    <div className="ml-auto flex space-x-2 items-center">
+                      {action.metadata?.agentStatus && (
+                        <button
+                          onClick={() => toggleActionDetails(action.id)}
+                          className={`text-xs px-2 py-1 rounded ${action.metadata.agentStatus === 'running'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : action.metadata.agentStatus === 'completed'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-red-100 text-red-800'
+                            }`}
+                        >
+                          {action.metadata.agentStatus === 'running' && 'Running...'}
+                          {action.metadata.agentStatus === 'completed' && 'Completed'}
+                          {action.metadata.agentStatus === 'error' && 'Error'}
+                        </button>
+                      )}
+                      {!action.completed && !action.metadata?.agentStatus && (
+                        <button
+                          onClick={() => onExecuteAction(action.id)}
+                          className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
+                        >
+                          Execute
+                        </button>
+                      )}
+                      {!action.completed && action.metadata?.agentStatus === 'error' && (
+                        <button
+                          onClick={() => onExecuteAction(action.id)}
+                          className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
+                        >
+                          Retry
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Display agent result or error when expanded */}
+                  {expandedActionId === action.id && action.metadata?.agentStatus && (
+                    <div className="mt-2 ml-6 p-2 bg-gray-50 rounded text-sm">
+                      {action.metadata.agentStatus === 'completed' && action.metadata.agentResult && (
+                        <div>
+                          {renderAgentResults ? (
+                            renderAgentResults(action)
+                          ) : (
+                            <div>
+                              <div className="font-semibold text-gray-900">Result:</div>
+                              <div className="text-gray-900">{action.metadata.agentResult}</div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {action.metadata.agentStatus === 'error' && action.metadata.agentError && (
+                        <div>
+                          <div className="font-semibold text-red-700">Error:</div>
+                          <div className="text-red-700">{action.metadata.agentError}</div>
+                        </div>
+                      )}
+                      {action.metadata.agentStatus === 'running' && (
+                        <div className="text-yellow-700 font-medium flex items-center">
+                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-yellow-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          The agent is currently processing this action...
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}

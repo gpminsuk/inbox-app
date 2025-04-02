@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import EntryCard from './EntryCard';
-import { InboxEntry } from '@/types';
+import { InboxEntry, Action, AgentHistoryList, AgentActionResult, AgentModelOutput } from '@/types';
 
 type InboxClientProps = {
   initialEntries: InboxEntry[];
@@ -11,7 +11,90 @@ type InboxClientProps = {
 
 export default function InboxClient({ initialEntries }: InboxClientProps) {
   const [entries, setEntries] = useState<InboxEntry[]>(initialEntries);
+  const [loading, setLoading] = useState(false);
+  const [pollingActions, setPollingActions] = useState<string[]>([]);
   const router = useRouter();
+
+  // Fetch entries on component mount
+  useEffect(() => {
+    if (initialEntries.length === 0) {
+      fetchEntries();
+    }
+  }, []);
+
+  // Poll for action status updates
+  useEffect(() => {
+    if (pollingActions.length === 0) return;
+
+    const intervalId = setInterval(() => {
+      pollingActions.forEach(actionId => {
+        checkActionStatus(actionId);
+      });
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(intervalId);
+  }, [pollingActions]);
+
+  const fetchEntries = async () => {
+    try {
+      const response = await fetch('/api/inbox');
+      if (!response.ok) {
+        throw new Error('Failed to fetch entries');
+      }
+      const data = await response.json();
+      setEntries(data);
+
+      // Check for any actions that are in 'running' state and add them to polling
+      const runningActions: string[] = [];
+      data.forEach((entry: InboxEntry) => {
+        entry.actions.forEach(action => {
+          if (action.metadata?.agentStatus === 'running') {
+            runningActions.push(action.id);
+          }
+        });
+      });
+
+      if (runningActions.length > 0) {
+        setPollingActions(runningActions);
+      }
+    } catch (error) {
+      console.error('Error fetching entries:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkActionStatus = async (actionId: string) => {
+    try {
+      const response = await fetch(`/api/agent/run?actionId=${actionId}`);
+      if (!response.ok) {
+        return;
+      }
+
+      const actionData = await response.json();
+
+      // If the action is no longer running, update it and remove from polling
+      if (actionData.metadata?.agentStatus !== 'running') {
+        // Update the entries state with the updated action
+        setEntries(entries.map(entry => {
+          if (entry.actions.some(action => action.id === actionId)) {
+            return {
+              ...entry,
+              actions: entry.actions.map(action =>
+                action.id === actionId ? { ...action, ...actionData } : action
+              )
+            };
+          }
+          return entry;
+        }));
+
+        // Remove from polling list
+        setPollingActions(prev => prev.filter(id => id !== actionId));
+      }
+    } catch (error) {
+      console.error('Error checking action status:', error);
+    }
+  };
 
   const handleDeleteEntry = async (entryId: string) => {
     try {
@@ -67,8 +150,59 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
 
   const handleExecuteAction = async (actionId: string) => {
     try {
-      const response = await fetch(`/api/actions/execute/${actionId}`, {
+      // Find the action in the entries state
+      let actionDescription = '';
+      let entryIndex = -1;
+      let actionIndex = -1;
+
+      // Find the entry and action indices
+      entries.forEach((entry, eIndex) => {
+        entry.actions.forEach((action, aIndex) => {
+          if (action.id === actionId) {
+            actionDescription = action.description;
+            entryIndex = eIndex;
+            actionIndex = aIndex;
+          }
+        });
+      });
+
+      if (entryIndex === -1 || actionIndex === -1) {
+        throw new Error('Action not found');
+      }
+
+      // Immediately update the UI to show running status
+      const updatedEntries = [...entries];
+      updatedEntries[entryIndex].actions[actionIndex].metadata!.agentStatus = 'running';
+      setEntries(updatedEntries);
+
+      // Add to polling list
+      setPollingActions(prev => [...prev, actionId]);
+
+      // Create a prompt for the agent based on the action description and email content
+      const entry = entries[entryIndex];
+      if (!entry) {
+        throw new Error('Entry not found');
+      }
+
+      const prompt = `Please help me with the following task related to an email:
+      
+Task: ${actionDescription}
+
+Email Subject: ${entry.title}
+Email Content: ${entry.content.substring(0, 500)}${entry.content.length > 500 ? '...' : ''}
+
+Please complete this task and provide a detailed summary of what you did.`;
+
+      // Call the agent API
+      const response = await fetch(`/api/agent/run`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt,
+          actionId
+        }),
       });
 
       if (!response.ok) {
@@ -89,12 +223,110 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
         }
         return entry;
       }));
-
-      // Show success message
-      alert('Action executed successfully!');
     } catch (error) {
       console.error('Error executing action:', error);
       alert('Failed to execute action. Please try again.');
+
+      // Remove from polling if there was an error
+      setPollingActions(prev => prev.filter(id => id !== actionId));
+
+      // Reset the action status in case of error
+      setEntries(entries.map(entry => {
+        if (entry.actions.some(action => action.id === actionId)) {
+          return {
+            ...entry,
+            actions: entry.actions.map(action => {
+              if (action.id === actionId) {
+                const updatedAction = { ...action };
+                if (updatedAction.metadata) {
+                  updatedAction.metadata.agentStatus = 'error';
+                  updatedAction.metadata.agentError = 'Failed to execute action';
+                } else {
+                  updatedAction.metadata = {
+                    agentStatus: 'error',
+                    agentError: 'Failed to execute action'
+                  };
+                }
+                return updatedAction;
+              }
+              return action;
+            })
+          };
+        }
+        return entry;
+      }));
+    }
+  };
+
+  // Parse agent results from JSON structure
+  const parseAgentResults = (resultString: string): AgentHistoryList | null => {
+    try {
+      // Parse the JSON string
+      const jsonData = JSON.parse(resultString);
+      return jsonData as AgentHistoryList;
+    } catch (error) {
+      console.error('Error parsing agent results:', error);
+      return null;
+    }
+  };
+
+  // Render agent results in a structured way
+  const renderAgentResults = (action: Action) => {
+    if (!action.metadata?.agentResult) {
+      return null;
+    }
+
+    try {
+      // Parse the agentResult string to a JSON object
+      const agentResult = typeof action.metadata.agentResult === 'string'
+        ? parseAgentResults(action.metadata.agentResult)
+        : action.metadata.agentResult as unknown as AgentHistoryList;
+
+      if (!agentResult || !agentResult.all_results) {
+        return (
+          <div className="mt-2 text-sm">
+            <h4 className="font-semibold text-gray-900">Agent Results:</h4>
+            <pre className="whitespace-pre-wrap text-xs mt-1 bg-gray-100 p-2 rounded text-gray-900">
+              {typeof action.metadata.agentResult === 'string'
+                ? action.metadata.agentResult
+                : JSON.stringify(action.metadata.agentResult, null, 2)}
+            </pre>
+          </div>
+        );
+      }
+
+      return (
+        <div className="mt-2 text-sm">
+          <h4 className="font-semibold text-gray-900">Agent Actions:</h4>
+          <div className="space-y-2 mt-1">
+            {agentResult.all_results.map((result: AgentActionResult, index: number) => (
+              <div
+                key={index}
+                className={`p-2 rounded ${result.error
+                  ? 'bg-red-50 border border-red-200'
+                  : result.is_done && result.success
+                    ? 'bg-green-50 border border-green-200'
+                    : 'bg-gray-50 border border-gray-200'
+                  }`}
+              >
+                {result.extracted_content && (
+                  <div className="font-medium text-gray-900">{result.extracted_content}</div>
+                )}
+                {result.error && (
+                  <div className="font-medium text-red-700 text-sm mt-1">{result.error}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    } catch (error) {
+      console.error('Error rendering agent results:', error);
+      return (
+        <div className="mt-2 text-sm text-red-600">
+          Error displaying agent results
+        </div>
+      );
     }
   };
 
@@ -109,7 +341,11 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
         </p>
       </div>
 
-      {entries.length === 0 ? (
+      {loading ? (
+        <div className="text-center py-12 bg-white rounded-lg shadow-sm">
+          <h3 className="text-xl font-medium text-gray-700 mb-2">Loading...</h3>
+        </div>
+      ) : entries.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-lg shadow-sm">
           <h3 className="text-xl font-medium text-gray-700 mb-2">Your inbox is empty</h3>
           <p className="text-gray-500 mb-4">
@@ -125,6 +361,7 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
               onDelete={handleDeleteEntry}
               onUpdateAction={handleUpdateAction}
               onExecuteAction={handleExecuteAction}
+              renderAgentResults={renderAgentResults}
             />
           ))}
         </div>

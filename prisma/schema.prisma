@@ -66,6 +66,7 @@ model InboxEntry {
   updatedAt DateTime @updatedAt
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailId   String?  // Gmail message ID for linking back to the original email
 }
 
 model Action {
@@ -75,6 +76,7 @@ model Action {
   dueDate      DateTime?
   inboxEntryId String
   inboxEntry   InboxEntry @relation(fields: [inboxEntryId], references: [id], onDelete: Cascade)
+  metadata     Json?      @default("{}")
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 }

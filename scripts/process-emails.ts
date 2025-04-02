@@ -435,6 +435,7 @@ async function createInboxEntry(
         title: email.subject,
         content: email.body,
         userId: userId,
+        emailId: email.messageId, // Save the Gmail message ID
         actions: {
           create: suggestedActions.map(action => ({
             description: action,
