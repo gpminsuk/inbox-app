@@ -34,3 +34,29 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## AI-Powered Email Actions
+
+The Inbox App uses Google's Gemini AI model to analyze emails and suggest relevant actions. This feature helps users process their emails more efficiently by automatically identifying potential tasks based on email content.
+
+### Setup
+
+To enable the AI-powered action suggestions:
+
+1. Get a Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Add your API key to the environment variables:
+   ```
+   GEMINI_API_KEY=your-gemini-api-key
+   ```
+   - For local development: Add to your `.env.local` file
+   - For Docker deployment: Add to your environment or set in the `.env` file used by docker-compose
+
+### How It Works
+
+The email processing script:
+1. Fetches emails from connected Gmail accounts
+2. Analyzes each email's subject and content using Gemini AI
+3. Generates 3-5 specific, actionable tasks based on the email
+4. Displays these suggested actions alongside the email in the inbox
+
+This integration helps users quickly identify the most relevant actions to take for each email, saving time and improving productivity.

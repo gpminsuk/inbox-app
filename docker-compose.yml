@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:15
+    container_name: gobi-inbox-db
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: your-postgres-user
+      POSTGRES_PASSWORD: your-postgres-password
+      POSTGRES_DB: gobi-inbox
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - inbox-network
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gobi-inbox-web
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://your-postgres-user:your-postgres-password@db:5432/gobi-inbox?schema=public
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://gobi.ngrok.app}
+    depends_on:
+      - db
+    networks:
+      - inbox-network
+
+  cron:
+    build:
+      context: .
+      dockerfile: Dockerfile.cron
+    container_name: gobi-inbox-cron
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://your-postgres-user:your-postgres-password@db:5432/gobi-inbox?schema=public
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://gobi.ngrok.app}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - db
+      - web
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - inbox-network
+
+networks:
+  inbox-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
