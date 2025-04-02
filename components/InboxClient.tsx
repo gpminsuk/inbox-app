@@ -54,16 +54,47 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
             ...entry,
             actions: entry.actions.map(action =>
               action.id === actionId ? { ...action, ...updatedAction } : action
-            ),
+            )
+          };
+        }
+        return entry;
+      }));
+    } catch (error) {
+      console.error('Error updating action:', error);
+      alert('Failed to update action. Please try again.');
+    }
+  };
+
+  const handleExecuteAction = async (actionId: string) => {
+    try {
+      const response = await fetch(`/api/actions/execute/${actionId}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to execute action');
+      }
+
+      const updatedAction = await response.json();
+
+      // Update the entries state with the executed action
+      setEntries(entries.map(entry => {
+        if (entry.actions.some(action => action.id === actionId)) {
+          return {
+            ...entry,
+            actions: entry.actions.map(action =>
+              action.id === actionId ? { ...action, ...updatedAction } : action
+            )
           };
         }
         return entry;
       }));
 
-      router.refresh();
+      // Show success message
+      alert('Action executed successfully!');
     } catch (error) {
-      console.error('Error updating action:', error);
-      alert('Failed to update action. Please try again.');
+      console.error('Error executing action:', error);
+      alert('Failed to execute action. Please try again.');
     }
   };
 
@@ -86,13 +117,14 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6">
+        <div className="space-y-6">
           {entries.map(entry => (
             <EntryCard
               key={entry.id}
               entry={entry}
               onDelete={handleDeleteEntry}
               onUpdateAction={handleUpdateAction}
+              onExecuteAction={handleExecuteAction}
             />
           ))}
         </div>

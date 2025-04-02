@@ -8,9 +8,10 @@ interface EntryCardProps {
   entry: InboxEntry;
   onDelete: (id: string) => void;
   onUpdateAction: (id: string, data: { completed: boolean }) => void;
+  onExecuteAction: (id: string) => void;
 }
 
-export default function EntryCard({ entry, onDelete, onUpdateAction }: EntryCardProps) {
+export default function EntryCard({ entry, onDelete, onUpdateAction, onExecuteAction }: EntryCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const pendingActions = entry.actions.filter(action => !action.completed).length;
@@ -74,6 +75,14 @@ export default function EntryCard({ entry, onDelete, onUpdateAction }: EntryCard
                     <span className="ml-auto text-xs text-gray-500">
                       Due: {format(action.dueDate, 'MMM d, yyyy')}
                     </span>
+                  )}
+                  {!action.completed && (
+                    <button
+                      onClick={() => onExecuteAction(action.id)}
+                      className="ml-auto px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
+                    >
+                      Execute
+                    </button>
                   )}
                 </div>
               ))}

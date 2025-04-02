@@ -27,7 +27,7 @@ export default function SignInClient() {
       </div>
 
       <button
-        onClick={() => handleSignIn('google')}
+        onClick={() => handleSignIn()}
         disabled={isSigningIn}
         className="w-full flex items-center justify-center space-x-2 bg-white border border-gray-300 rounded-md py-3 px-4 hover:bg-gray-50 mb-4"
       >

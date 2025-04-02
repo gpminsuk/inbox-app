@@ -25,14 +25,11 @@ RUN apk add --no-cache tini
 RUN echo '#!/bin/sh' > /app/run-cron.sh && \
     echo 'while true; do' >> /app/run-cron.sh && \
     echo '  echo "Running email processor at $(date)"' >> /app/run-cron.sh && \
-    echo '  npx ts-node /app/scripts/process-emails.ts >> /app/logs/cron.log 2>&1' >> /app/run-cron.sh && \
+    echo '  npx ts-node /app/scripts/process-emails.ts' >> /app/run-cron.sh && \
     echo '  echo "Sleeping for 15 minutes..."' >> /app/run-cron.sh && \
     echo '  sleep 900' >> /app/run-cron.sh && \
     echo 'done' >> /app/run-cron.sh && \
     chmod +x /app/run-cron.sh
-
-# Install googleapis package
-RUN yarn add googleapis
 
 # Use tini as entrypoint to handle signals properly
 ENTRYPOINT ["/sbin/tini", "--"]

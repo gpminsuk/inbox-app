@@ -18,12 +18,12 @@ export async function GET(request: Request) {
     const source = searchParams.get('source') || undefined;
     const level = searchParams.get('level') || undefined;
     const before = searchParams.get('before') || undefined; // Cursor for pagination (timestamp)
-    
+
     // Build where clause
-    const where: any = {};
+    const where: { [key: string]: { equals: string } | { lt: Date } } = {};
     if (source) where.source = { equals: source };
     if (level) where.level = { equals: level };
-    
+
     // Add cursor condition if provided
     if (before) {
       where.timestamp = { lt: new Date(before) };

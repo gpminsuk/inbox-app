@@ -177,25 +177,75 @@ async function getGmailClient(refreshToken: string | null, accessToken: string |
   }
 }
 
-// Function to fetch unread emails
-async function fetchUnreadEmails(gmail: GmailClient, maxResults: number = 10): Promise<GmailMessage[]> {
+// Function to fetch the latest email timestamp
+async function getLatestEmailTimestamp(gmail: GmailClient): Promise<Date | null> {
   try {
-    // Only fetch unread emails
+    // Fetch the most recent email
     const response = await gmail.users.messages.list({
       userId: 'me',
-      q: 'is:unread', // Only fetch unread emails
-      maxResults: maxResults,
+      maxResults: 1,
     });
 
-    // If no unread emails, return empty array
+    // If no emails, return null
     if (!response.data.messages || response.data.messages.length === 0) {
-      log('No unread messages found.');
+      log('No emails found.');
+      return null;
+    }
+
+    // Get the message ID
+    const messageId = response.data.messages[0].id;
+    if (!messageId) {
+      log('No message ID found for the latest email.');
+      return null;
+    }
+
+    // Get full email data
+    const email = await gmail.users.messages.get({
+      userId: 'me',
+      id: messageId,
+    });
+
+    // Extract the timestamp
+    if (email.data.internalDate) {
+      const timestamp = new Date(parseInt(email.data.internalDate));
+      log(`Latest email timestamp: ${timestamp.toISOString()}`);
+      return timestamp;
+    }
+
+    return null;
+  } catch (error) {
+    log(`Error fetching latest email timestamp: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    return null;
+  }
+}
+
+// Function to fetch emails received after a specific timestamp
+async function fetchRecentEmails(gmail: GmailClient, afterTimestamp: Date | null, maxResults: number = 10): Promise<GmailMessage[]> {
+  try {
+    // If no timestamp, return empty array
+    if (!afterTimestamp) {
+      log('No previous timestamp found. Skipping email processing for this run.');
       return [];
     }
 
-    const emails: GmailMessage[] = [];
+    // Convert to seconds for Gmail API (which uses seconds, not milliseconds)
+    const afterSeconds = Math.floor(afterTimestamp.getTime() / 1000);
+    log(`Fetching emails after timestamp: ${afterTimestamp.toISOString()} (${afterSeconds}s)`);
 
-    // Fetch full details for each email
+    const response = await gmail.users.messages.list({
+      userId: 'me',
+      maxResults: 50, // Request more than we need since we'll filter
+      q: `after:${afterSeconds}`,
+    });
+
+    // If no emails, return empty array
+    if (!response.data.messages || response.data.messages.length === 0) {
+      log('No messages found in the date range.');
+      return [];
+    }
+
+    // Fetch full email details and filter by timestamp
+    const emails: GmailMessage[] = [];
     for (const message of response.data.messages) {
       const messageId = message.id;
       if (!messageId) {
@@ -204,21 +254,49 @@ async function fetchUnreadEmails(gmail: GmailClient, maxResults: number = 10): P
       }
 
       try {
+        // Get full email data
         const email = await gmail.users.messages.get({
           userId: 'me',
           id: messageId,
-          format: 'full',
         });
 
-        emails.push(email.data);
+        // Skip messages with internalDate smaller than afterTimestamp
+        if (email.data.internalDate) {
+          const emailTimestamp = parseInt(email.data.internalDate);
+          const afterTimestampMs = afterTimestamp.getTime();
+
+          if (emailTimestamp <= afterTimestampMs) {
+            log(`Skipping email with timestamp ${new Date(emailTimestamp).toISOString()} - older than or equal to last processed`);
+            continue;
+          }
+
+          // Include the email since it's newer than our timestamp
+          emails.push(email.data);
+          log(`Including email with timestamp ${new Date(emailTimestamp).toISOString()}`);
+        } else {
+          // If no timestamp, include it anyway
+          emails.push(email.data);
+          log(`Including email with unknown timestamp`);
+        }
+
+        // Stop if we have enough emails
+        if (emails.length >= maxResults) {
+          log(`Reached maximum number of emails to process (${maxResults})`);
+          break;
+        }
       } catch (error) {
         log(`Error fetching email ${messageId}: ${error instanceof Error ? error.message : String(error)}`, 'error');
       }
     }
 
-    return emails;
+    return emails.sort((a, b) => {
+      // Sort by internalDate (timestamp) in ascending order
+      const dateA = a.internalDate ? parseInt(a.internalDate) : 0;
+      const dateB = b.internalDate ? parseInt(b.internalDate) : 0;
+      return dateA - dateB;
+    });
   } catch (error) {
-    log(`Error fetching unread emails: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    log(`Error fetching emails: ${error instanceof Error ? error.message : String(error)}`, 'error');
     return [];
   }
 }
@@ -402,14 +480,43 @@ async function main(): Promise<void> {
           account.user.emailPermissionLevel
         );
 
-        // Fetch only unread emails
-        const emails = await fetchUnreadEmails(gmail);
+        // If no previous timestamp, just get and store the latest email timestamp
+        if (!account.user.lastEmailProcessedAt) {
+          log('No previous timestamp found. Getting latest email timestamp...');
+          const latestTimestamp = await getLatestEmailTimestamp(gmail);
+
+          if (latestTimestamp) {
+            await prisma.user.update({
+              where: { id: account.user.id },
+              data: { lastEmailProcessedAt: latestTimestamp }
+            });
+            log(`Set initial timestamp to ${latestTimestamp.toISOString()} for user ${account.user.email || account.user.id}`);
+          } else {
+            log(`No emails found for user ${account.user.email || account.user.id}`);
+          }
+
+          continue; // Skip to next account
+        }
+
+        // Fetch emails received after the last processed timestamp
+        const emails = await fetchRecentEmails(gmail, account.user.lastEmailProcessedAt);
 
         if (emails.length > 0) {
-          log(`Found ${emails.length} unread emails for user: ${account.user.email || account.user.id}`);
+          log(`Found ${emails.length} new emails for user: ${account.user.email || account.user.id}`);
+
+          // Track the most recent email timestamp
+          let latestEmailTimestamp: Date | null = null;
 
           for (const email of emails) {
             const parsedEmail = parseEmail(email);
+
+            // Update the latest timestamp if this email is newer
+            if (email.internalDate) {
+              const emailDate = new Date(parseInt(email.internalDate));
+              if (!latestEmailTimestamp || emailDate > latestEmailTimestamp) {
+                latestEmailTimestamp = emailDate;
+              }
+            }
 
             // Get suggested actions from Gemini
             const suggestedActions = await getSuggestedActions(parsedEmail.subject, parsedEmail.body);
@@ -439,8 +546,17 @@ async function main(): Promise<void> {
 
             totalProcessedEmails++;
           }
+
+          // Update the user's lastEmailProcessedAt timestamp
+          if (latestEmailTimestamp) {
+            await prisma.user.update({
+              where: { id: account.user.id },
+              data: { lastEmailProcessedAt: latestEmailTimestamp }
+            });
+            log(`Updated last processed timestamp to ${latestEmailTimestamp.toISOString()} for user ${account.user.email || account.user.id}`);
+          }
         } else {
-          log(`No unread emails found for user: ${account.user.email || account.user.id}`);
+          log(`No new emails found for user: ${account.user.email || account.user.id}`);
         }
       } catch (error) {
         log(`Error processing emails for user ${account.user.id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
@@ -450,7 +566,7 @@ async function main(): Promise<void> {
     if (totalProcessedEmails === 0) {
       log('No new emails to process.');
     } else {
-      log(`Processed ${totalProcessedEmails} unread emails.`);
+      log(`Processed ${totalProcessedEmails} new emails.`);
     }
 
     log('Email processing job completed.');

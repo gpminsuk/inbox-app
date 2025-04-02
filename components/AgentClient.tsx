@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import Link from 'next/link';
 
 type Log = {
   id: string;
@@ -15,33 +14,29 @@ type Log = {
 
 type Pagination = {
   total: number;
+  page: number;
   limit: number;
-  nextCursor: string | null;
-  hasMore: boolean;
+  pages: number;
 };
 
 export default function AgentClient() {
   const { data: session } = useSession();
   const [logs, setLogs] = useState<Log[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<Pagination>({
     total: 0,
+    page: 1,
     limit: 50,
-    nextCursor: null,
-    hasMore: false,
+    pages: 0,
   });
   const [filter, setFilter] = useState({
     source: '',
     level: '',
   });
 
-  // Reference to the logs container for scrolling
-  const logsContainerRef = useRef<HTMLDivElement>(null);
-
   // Fetch logs
-  const fetchLogs = async (cursor?: string) => {
+  const fetchLogs = async () => {
     if (!session) return;
 
     setIsLoading(true);
@@ -50,10 +45,10 @@ export default function AgentClient() {
     try {
       // Build query string
       const params = new URLSearchParams({
+        page: pagination.page.toString(),
         limit: pagination.limit.toString(),
       });
 
-      if (cursor) params.append('before', cursor);
       if (filter.source) params.append('source', filter.source);
       if (filter.level) params.append('level', filter.level);
 
@@ -64,49 +59,32 @@ export default function AgentClient() {
       }
 
       const data = await response.json();
-
-      if (cursor) {
-        // Prepend older logs to the beginning
-        setLogs(prevLogs => [...data.logs, ...prevLogs]);
-      } else {
-        // Initial load
-        setLogs(data.logs);
-      }
-
+      setLogs(data.logs);
       setPagination(data.pagination);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       console.error('Error fetching logs:', err);
     } finally {
       setIsLoading(false);
-      setIsLoadingMore(false);
     }
   };
 
-  // Load more logs (older logs)
-  const handleLoadMore = async () => {
-    if (!pagination.nextCursor || isLoadingMore) return;
-
-    setIsLoadingMore(true);
-    await fetchLogs(pagination.nextCursor);
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    setPagination(prev => ({ ...prev, page: newPage }));
   };
 
   // Handle filter change
   const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFilter(prev => ({ ...prev, [name]: value }));
+    setPagination(prev => ({ ...prev, page: 1 })); // Reset to first page when filter changes
   };
 
-  // Apply filters
-  const applyFilters = () => {
-    fetchLogs();
-  };
-
-  // Fetch logs on mount
+  // Fetch logs on mount and when dependencies change
   useEffect(() => {
-    if (session) {
-      fetchLogs();
-    }
+    fetchLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   // Format timestamp
@@ -166,10 +144,10 @@ export default function AgentClient() {
 
         <div className="flex items-end">
           <button
-            onClick={applyFilters}
+            onClick={() => fetchLogs()}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
-            Apply Filters
+            Refresh
           </button>
         </div>
       </div>
@@ -181,8 +159,8 @@ export default function AgentClient() {
         </div>
       )}
 
-      {/* Loading state for initial load */}
-      {isLoading && !isLoadingMore ? (
+      {/* Loading state */}
+      {isLoading ? (
         <div className="text-center py-8">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-600"></div>
           <p className="mt-2 text-gray-600">Loading logs...</p>
@@ -192,34 +170,9 @@ export default function AgentClient() {
           <p className="text-gray-600">No logs found</p>
         </div>
       ) : (
-        <div>
-          {/* Load Previous button */}
-          {pagination.hasMore && (
-            <div className="text-center mb-4">
-              <button
-                onClick={handleLoadMore}
-                disabled={isLoadingMore}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                {isLoadingMore ? (
-                  <>
-                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-t-2 border-b-2 border-indigo-600"></div>
-                    Loading...
-                  </>
-                ) : (
-                  <>
-                    <svg className="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                    </svg>
-                    Load Previous Logs
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
+        <>
           {/* Logs table */}
-          <div className="overflow-x-auto" ref={logsContainerRef}>
+          <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -254,11 +207,93 @@ export default function AgentClient() {
             </table>
           </div>
 
-          {/* Summary */}
-          <div className="mt-4 text-sm text-gray-500">
-            Showing {logs.length} of {pagination.total} logs
-          </div>
-        </div>
+          {/* Pagination */}
+          {pagination.pages > 1 && (
+            <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 mt-4">
+              <div className="flex flex-1 justify-between sm:hidden">
+                <button
+                  onClick={() => handlePageChange(Math.max(1, pagination.page - 1))}
+                  disabled={pagination.page === 1}
+                  className={`relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium ${pagination.page === 1 ? 'text-gray-300' : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => handlePageChange(Math.min(pagination.pages, pagination.page + 1))}
+                  disabled={pagination.page === pagination.pages}
+                  className={`relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium ${pagination.page === pagination.pages ? 'text-gray-300' : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                >
+                  Next
+                </button>
+              </div>
+              <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm text-gray-700">
+                    Showing <span className="font-medium">{((pagination.page - 1) * pagination.limit) + 1}</span> to{' '}
+                    <span className="font-medium">
+                      {Math.min(pagination.page * pagination.limit, pagination.total)}
+                    </span>{' '}
+                    of <span className="font-medium">{pagination.total}</span> results
+                  </p>
+                </div>
+                <div>
+                  <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+                    <button
+                      onClick={() => handlePageChange(Math.max(1, pagination.page - 1))}
+                      disabled={pagination.page === 1}
+                      className={`relative inline-flex items-center rounded-l-md px-2 py-2 ${pagination.page === 1 ? 'text-gray-300' : 'text-gray-400 hover:bg-gray-50'
+                        }`}
+                    >
+                      <span className="sr-only">Previous</span>
+                      &larr;
+                    </button>
+
+                    {/* Page numbers */}
+                    {Array.from({ length: Math.min(5, pagination.pages) }, (_, i) => {
+                      let pageNum;
+
+                      // Logic to show pages around current page
+                      if (pagination.pages <= 5) {
+                        pageNum = i + 1;
+                      } else if (pagination.page <= 3) {
+                        pageNum = i + 1;
+                      } else if (pagination.page >= pagination.pages - 2) {
+                        pageNum = pagination.pages - 4 + i;
+                      } else {
+                        pageNum = pagination.page - 2 + i;
+                      }
+
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => handlePageChange(pageNum)}
+                          className={`relative inline-flex items-center px-4 py-2 text-sm font-semibold ${pagination.page === pageNum
+                            ? 'z-10 bg-indigo-600 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
+                            : 'text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:outline-offset-0'
+                            }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+
+                    <button
+                      onClick={() => handlePageChange(Math.min(pagination.pages, pagination.page + 1))}
+                      disabled={pagination.page === pagination.pages}
+                      className={`relative inline-flex items-center rounded-r-md px-2 py-2 ${pagination.page === pagination.pages ? 'text-gray-300' : 'text-gray-400 hover:bg-gray-50'
+                        }`}
+                    >
+                      <span className="sr-only">Next</span>
+                      &rarr;
+                    </button>
+                  </nav>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

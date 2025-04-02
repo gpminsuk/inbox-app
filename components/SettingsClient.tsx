@@ -27,7 +27,7 @@ interface SettingsClientProps {
 export default function SettingsClient({ user, hasGoogleAccount }: SettingsClientProps) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
-  const [permissionLevel, setPermissionLevel] = useState(user?.emailPermissionLevel || 'read-only');
+  const [permissionLevel] = useState(user?.emailPermissionLevel || 'read-only');
 
   const handleConnectGmail = async () => {
     setIsConnecting(true);

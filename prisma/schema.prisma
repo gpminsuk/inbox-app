@@ -49,18 +49,11 @@ model User {
   emailVerified       DateTime?
   image               String?
   emailPermissionLevel String    @default("read-only") // Options: "read-only" or "modify-compose"
+  lastEmailProcessedAt DateTime? // Timestamp of the last processed email
   accounts            Account[]
   sessions            Session[]
   inboxEntries        InboxEntry[]
   logs                Log[]     // Relation to logs created by this user's account
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
 }
 
 // Inbox App Models
