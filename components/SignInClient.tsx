@@ -1,16 +1,16 @@
 'use client';
 
-import { signIn } from 'next-auth/react';
 import { useState } from 'react';
 import Link from 'next/link';
+import { signInWithDefaultScope } from '@/lib/auth-utils';
 
 export default function SignInClient() {
   const [isSigningIn, setIsSigningIn] = useState(false);
 
-  const handleSignIn = async (provider: string) => {
+  const handleSignIn = async () => {
     setIsSigningIn(true);
     try {
-      await signIn(provider, { callbackUrl: '/auth/signin' });
+      signInWithDefaultScope('/');
     } catch (error) {
       console.error('Error signing in:', error);
       setIsSigningIn(false);

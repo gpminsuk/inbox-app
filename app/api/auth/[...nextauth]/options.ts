@@ -19,19 +19,40 @@ export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
     GoogleProvider({
+      id: 'google',
       clientId: process.env.GOOGLE_CLIENT_ID || "",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
       authorization: {
         params: {
-          scope: "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://mail.google.com/",
           prompt: "consent",
           access_type: "offline",
-          response_type: "code"
+          response_type: "code",
+          redirect_uri: process.env.GOOGLE_REDIRECT_URI,
         }
       }
     }),
   ],
   callbacks: {
+    async signIn({ user, account }) {
+      if (!!account && user?.id) {
+        try {
+          // Check if this is an upgrade request by examining the account scope
+          const isUpgradeRequest = account.scope?.includes('gmail.modify');
+
+          if (isUpgradeRequest) {
+            // Update the user's permission level in the database
+            await prisma.user.update({
+              where: { id: user.id },
+              data: { emailPermissionLevel: 'modify-compose' },
+            });
+            console.log(`Upgraded permissions for user ${user.id} to modify-compose`);
+          }
+        } catch (error) {
+          console.error('Error handling user permission level:', error);
+        }
+      }
+      return true;
+    },
     session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;

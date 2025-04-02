@@ -1,9 +1,10 @@
 'use client';
 
-import { signIn, signOut, useSession } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useState } from 'react';
+import { signInWithDefaultScope } from '@/lib/auth-utils';
 
 export default function Header() {
   const { data: session } = useSession();
@@ -16,7 +17,7 @@ export default function Header() {
           <Link href="/" className="text-2xl font-bold text-indigo-600">
             Inbox App
           </Link>
-          
+
           <div className="hidden md:flex items-center space-x-4">
             <Link href="/" className="text-gray-700 hover:text-indigo-600">
               Home
@@ -25,6 +26,9 @@ export default function Header() {
               <>
                 <Link href="/inbox" className="text-gray-700 hover:text-indigo-600">
                   My Inbox
+                </Link>
+                <Link href="/agent" className="text-gray-700 hover:text-indigo-600">
+                  Agent
                 </Link>
                 <Link href="/settings" className="text-gray-700 hover:text-indigo-600">
                   Settings
@@ -53,14 +57,14 @@ export default function Header() {
               </>
             ) : (
               <button
-                onClick={() => signIn('google')}
+                onClick={() => signInWithDefaultScope('/')}
                 className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
               >
                 Sign In with Google
               </button>
             )}
           </div>
-          
+
           {/* Mobile menu button */}
           <div className="md:hidden">
             <button
@@ -93,7 +97,7 @@ export default function Header() {
             </button>
           </div>
         </div>
-        
+
         {/* Mobile menu */}
         {isMenuOpen && (
           <div className="mt-4 md:hidden">
@@ -114,6 +118,13 @@ export default function Header() {
                   My Inbox
                 </Link>
                 <Link
+                  href="/agent"
+                  className="block py-2 text-gray-700 hover:text-indigo-600"
+                  onClick={() => setIsMenuOpen(false)}
+                >
+                  Agent
+                </Link>
+                <Link
                   href="/settings"
                   className="block py-2 text-gray-700 hover:text-indigo-600"
                   onClick={() => setIsMenuOpen(false)}
@@ -121,10 +132,7 @@ export default function Header() {
                   Settings
                 </Link>
                 <button
-                  onClick={() => {
-                    signOut();
-                    setIsMenuOpen(false);
-                  }}
+                  onClick={() => signOut()}
                   className="block w-full text-left py-2 text-gray-700 hover:text-indigo-600"
                 >
                   Sign Out
@@ -133,7 +141,7 @@ export default function Header() {
             ) : (
               <button
                 onClick={() => {
-                  signIn('google');
+                  signInWithDefaultScope('/');
                   setIsMenuOpen(false);
                 }}
                 className="block w-full text-left py-2 text-gray-700 hover:text-indigo-600"

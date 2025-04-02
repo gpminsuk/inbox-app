@@ -3,13 +3,11 @@
 /**
  * Gmail Email Processor
  * 
- * This script fetches the topmost email from connected Gmail accounts and
+ * This script fetches unread emails from connected Gmail accounts and
  * prints them to the console. It can be extended to create inbox entries.
  */
 
 import { PrismaClient } from '@prisma/client';
-import * as fs from 'fs';
-import * as path from 'path';
 import { GoogleGenAI, Type } from '@google/genai';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -19,27 +17,137 @@ type GmailClient = any;
 type GmailMessage = any;
 
 const prisma = new PrismaClient();
-const logDir = path.join(__dirname, '../logs');
 
-// Ensure log directory exists
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir, { recursive: true });
+// Log levels
+type LogLevel = 'info' | 'warning' | 'error';
+
+// Log entry type
+type LogEntry = {
+  message: string;
+  level: LogLevel;
+  userId?: string;
+  timestamp: Date;
+};
+
+// Log queue to store logs before writing to database
+class LogQueue {
+  private queue: LogEntry[] = [];
+  private processing = false;
+  private flushPromise: Promise<void> = Promise.resolve();
+
+  // Add a log to the queue
+  add(entry: LogEntry): void {
+    this.queue.push(entry);
+
+    // Start processing if not already in progress
+    if (!this.processing) {
+      this.process();
+    }
+  }
+
+  // Process logs in the queue
+  private async process(): Promise<void> {
+    if (this.processing || this.queue.length === 0) return;
+
+    this.processing = true;
+
+    try {
+      // Take the next log from the queue
+      const entry = this.queue.shift();
+      if (!entry) {
+        this.processing = false;
+        return;
+      }
+
+      // Write to database
+      await prisma.log.create({
+        data: {
+          message: entry.message,
+          level: entry.level,
+          source: 'email-processor',
+          timestamp: entry.timestamp,
+          userId: entry.userId || null
+        }
+      });
+    } catch (error) {
+      console.error(`Failed to save log to database: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.processing = false;
+
+      // Continue processing if there are more logs
+      if (this.queue.length > 0) {
+        this.process();
+      }
+    }
+  }
+
+  // Flush all logs and wait for completion
+  async flush(): Promise<void> {
+    // If already flushing, return the existing promise
+    if (this.processing) {
+      // Wait for current processing to complete and then flush again
+      return this.flushPromise.then(() => this.flush());
+    }
+
+    // If queue is empty, return resolved promise
+    if (this.queue.length === 0) {
+      return Promise.resolve();
+    }
+
+    // Create a new flush promise
+    this.flushPromise = new Promise<void>(async (resolve) => {
+      // Process all remaining logs
+      while (this.queue.length > 0) {
+        this.processing = true;
+        try {
+          const entries = [...this.queue];
+          this.queue = [];
+
+          // Batch insert logs
+          await prisma.log.createMany({
+            data: entries.map(entry => ({
+              message: entry.message,
+              level: entry.level,
+              source: 'email-processor',
+              timestamp: entry.timestamp,
+              userId: entry.userId || null
+            }))
+          });
+        } catch (error) {
+          console.error(`Failed to flush logs to database: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          this.processing = false;
+        }
+      }
+      resolve();
+    });
+
+    return this.flushPromise;
+  }
 }
 
-// Create log file with timestamp
-const logFile = path.join(logDir, `email-process-${new Date().toISOString().replace(/:/g, '-')}.log`);
-const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+// Create a global log queue
+const logQueue = new LogQueue();
 
-// Helper function to log messages both to console and file
-function log(message: string): void {
-  const timestamp = new Date().toISOString();
-  const logMessage = `${timestamp} - ${message}`;
+// Helper function to log messages to console and queue for database
+function log(message: string, level: LogLevel = 'info', userId?: string): void {
+  const timestamp = new Date();
+  const logMessage = `${timestamp.toISOString()} - ${message}`;
+
+  // Log to console immediately
   console.log(logMessage);
-  logStream.write(logMessage + '\n');
+
+  // Add to queue for database logging
+  logQueue.add({
+    message,
+    level,
+    userId,
+    timestamp
+  });
 }
 
 // Function to get Gmail API client for a user
-async function getGmailClient(refreshToken: string | null, accessToken: string | null): Promise<GmailClient> {
+async function getGmailClient(refreshToken: string | null, accessToken: string | null, permissionLevel: string = 'read-only'): Promise<GmailClient> {
   if (!refreshToken && !accessToken) {
     throw new Error('No refresh token or access token available');
   }
@@ -51,7 +159,7 @@ async function getGmailClient(refreshToken: string | null, accessToken: string |
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      `${process.env.NEXTAUTH_URL}/api/auth/callback/google`
+      process.env.GOOGLE_REDIRECT_URI,
     );
 
     oauth2Client.setCredentials({
@@ -59,42 +167,59 @@ async function getGmailClient(refreshToken: string | null, accessToken: string |
       access_token: accessToken || undefined,
     });
 
+    // Log the permission level
+    log(`Using Gmail API with ${permissionLevel} permissions`);
+
     return google.gmail({ version: 'v1', auth: oauth2Client });
   } catch (error) {
-    log(`Error creating Gmail client: ${error instanceof Error ? error.message : String(error)}`);
+    log(`Error getting Gmail client: ${error instanceof Error ? error.message : String(error)}`, 'error');
     throw error;
   }
 }
 
-// Function to fetch the topmost email
-async function fetchTopmostEmail(gmail: GmailClient): Promise<GmailMessage | null> {
+// Function to fetch unread emails
+async function fetchUnreadEmails(gmail: GmailClient, maxResults: number = 10): Promise<GmailMessage[]> {
   try {
+    // Only fetch unread emails
     const response = await gmail.users.messages.list({
       userId: 'me',
-      maxResults: 1, // Get only the topmost email
+      q: 'is:unread', // Only fetch unread emails
+      maxResults: maxResults,
     });
 
+    // If no unread emails, return empty array
     if (!response.data.messages || response.data.messages.length === 0) {
-      log('No messages found.');
-      return null;
+      log('No unread messages found.');
+      return [];
     }
 
-    const messageId = response.data.messages[0].id;
-    if (!messageId) {
-      log('No message ID found.');
-      return null;
+    const emails: GmailMessage[] = [];
+
+    // Fetch full details for each email
+    for (const message of response.data.messages) {
+      const messageId = message.id;
+      if (!messageId) {
+        log('No message ID found for one of the emails.');
+        continue;
+      }
+
+      try {
+        const email = await gmail.users.messages.get({
+          userId: 'me',
+          id: messageId,
+          format: 'full',
+        });
+
+        emails.push(email.data);
+      } catch (error) {
+        log(`Error fetching email ${messageId}: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      }
     }
 
-    const email = await gmail.users.messages.get({
-      userId: 'me',
-      id: messageId,
-      format: 'full',
-    });
-
-    return email.data;
+    return emails;
   } catch (error) {
-    log(`Error fetching topmost email: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+    log(`Error fetching unread emails: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    return [];
   }
 }
 
@@ -210,12 +335,41 @@ IMPORTANT: Return your response ONLY as a valid JSON array of strings, with each
       }
     } catch (parseError) {
       // If JSON parsing fails, fall back to text splitting
-      log(`Failed to parse Gemini response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+      log(`Failed to parse Gemini response as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`, 'error');
     }
   } catch (error) {
-    log(`Failed to generate Gemini response: ${error instanceof Error ? error.message : String(error)}`);
+    log(`Failed to generate Gemini response: ${error instanceof Error ? error.message : String(error)}`, 'error');
   }
   return [];
+}
+
+// Function to create an inbox entry from an email
+async function createInboxEntry(
+  userId: string,
+  email: ReturnType<typeof parseEmail>,
+  suggestedActions: string[],
+  canModifyEmails: boolean
+): Promise<void> {
+  try {
+    // Create the inbox entry
+    const inboxEntry = await prisma.inboxEntry.create({
+      data: {
+        title: email.subject,
+        content: email.body,
+        userId: userId,
+        actions: {
+          create: suggestedActions.map(action => ({
+            description: action,
+            completed: false
+          }))
+        }
+      }
+    });
+
+    log(`Created inbox entry: ${inboxEntry.id}`);
+  } catch (error) {
+    log(`Error creating inbox entry: ${error instanceof Error ? error.message : String(error)}`, 'error');
+  }
 }
 
 // Main function
@@ -235,56 +389,97 @@ async function main(): Promise<void> {
 
     log(`Found ${accounts.length} Google accounts.`);
 
+    let totalProcessedEmails = 0;
+
     for (const account of accounts) {
       try {
         log(`Processing emails for user: ${account.user.email || account.user.id}`);
 
-        // Get Gmail client
-        const gmail = await getGmailClient(account.refresh_token, account.access_token);
+        // Get Gmail client with permission level
+        const gmail = await getGmailClient(
+          account.refresh_token,
+          account.access_token,
+          account.user.emailPermissionLevel
+        );
 
-        // Fetch topmost email
-        const email = await fetchTopmostEmail(gmail);
+        // Fetch only unread emails
+        const emails = await fetchUnreadEmails(gmail);
 
-        if (email) {
-          const parsedEmail = parseEmail(email);
+        if (emails.length > 0) {
+          log(`Found ${emails.length} unread emails for user: ${account.user.email || account.user.id}`);
 
-          // Get suggested actions from Gemini
-          const suggestedActions = await getSuggestedActions(parsedEmail.subject, parsedEmail.body);
+          for (const email of emails) {
+            const parsedEmail = parseEmail(email);
 
-          // Print email details
-          log('----------------------------------------');
-          log(`User: ${account.user.email || account.user.id}`);
-          log(`Subject: ${parsedEmail.subject}`);
-          log(`From: ${parsedEmail.from}`);
-          log(`Date: ${parsedEmail.date}`);
-          log(`Status: ${parsedEmail.isUnread ? 'UNREAD' : 'READ'}`);
-          log(`Body: ${parsedEmail.body.substring(0, 200)}${parsedEmail.body.length > 200 ? '...' : ''}`);
-          log('Suggested Actions:');
-          suggestedActions.forEach((action, index) => {
-            log(`  ${index + 1}. ${action}`);
-          });
-          log('----------------------------------------');
+            // Get suggested actions from Gemini
+            const suggestedActions = await getSuggestedActions(parsedEmail.subject, parsedEmail.body);
 
-          // Here you could add code to create an inbox entry if needed
+            // Print email details
+            log('----------------------------------------');
+            log(`User: ${account.user.email || account.user.id}`);
+            log(`Subject: ${parsedEmail.subject}`);
+            log(`From: ${parsedEmail.from}`);
+            log(`Date: ${parsedEmail.date}`);
+            log(`Status: ${parsedEmail.isUnread ? 'UNREAD' : 'READ'}`);
+            log(`Body: ${parsedEmail.body.substring(0, 200)}${parsedEmail.body.length > 200 ? '...' : ''}`);
+            log('Suggested Actions:');
+            for (let index = 0; index < suggestedActions.length; index++) {
+              const action = suggestedActions[index];
+              log(`  ${index + 1}. ${action}`);
+            }
+            log('----------------------------------------');
+
+            // Create inbox entry
+            await createInboxEntry(
+              account.user.id,
+              parsedEmail,
+              suggestedActions,
+              account.user.emailPermissionLevel === 'modify-compose'
+            );
+
+            totalProcessedEmails++;
+          }
         } else {
-          log(`No emails found for user: ${account.user.email || account.user.id}`);
+          log(`No unread emails found for user: ${account.user.email || account.user.id}`);
         }
       } catch (error) {
-        log(`Error processing emails for user ${account.user.id}: ${error instanceof Error ? error.message : String(error)}`);
+        log(`Error processing emails for user ${account.user.id}: ${error instanceof Error ? error.message : String(error)}`, 'error');
       }
+    }
+
+    if (totalProcessedEmails === 0) {
+      log('No new emails to process.');
+    } else {
+      log(`Processed ${totalProcessedEmails} unread emails.`);
     }
 
     log('Email processing job completed.');
   } catch (error) {
-    log(`Error in email processing job: ${error instanceof Error ? error.message : String(error)}`);
+    log(`Error in email processing job: ${error instanceof Error ? error.message : String(error)}`, 'error');
   } finally {
     await prisma.$disconnect();
-    logStream.end();
   }
 }
 
 // Run the main function
-main().catch(error => {
-  log(`Unhandled error: ${error instanceof Error ? error.message : String(error)}`);
+main().catch(async error => {
+  log(`Unhandled error: ${error instanceof Error ? error.message : String(error)}`, 'error');
+
+  // Ensure all logs are written before exiting
+  try {
+    await logQueue.flush();
+  } catch (err) {
+    console.error('Error flushing logs:', err);
+  }
+
   process.exit(1);
+});
+
+// Ensure all logs are flushed before the script exits
+process.on('beforeExit', async () => {
+  try {
+    await logQueue.flush();
+  } catch (err) {
+    console.error('Error flushing logs:', err);
+  }
 });

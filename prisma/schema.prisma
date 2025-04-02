@@ -43,14 +43,16 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  accounts      Account[]
-  sessions      Session[]
-  inboxEntries  InboxEntry[]
+  id                  String    @id @default(cuid())
+  name                String?
+  email               String?   @unique
+  emailVerified       DateTime?
+  image               String?
+  emailPermissionLevel String    @default("read-only") // Options: "read-only" or "modify-compose"
+  accounts            Account[]
+  sessions            Session[]
+  inboxEntries        InboxEntry[]
+  logs                Log[]     // Relation to logs created by this user's account
 }
 
 model VerificationToken {
@@ -82,4 +84,19 @@ model Action {
   inboxEntry   InboxEntry @relation(fields: [inboxEntryId], references: [id], onDelete: Cascade)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+}
+
+// Log model for storing agent activity logs
+model Log {
+  id        String   @id @default(cuid())
+  message   String   @db.Text
+  level     String   @default("info") // info, warning, error
+  source    String   @default("email-processor") // The source of the log (email-processor, etc.)
+  timestamp DateTime @default(now())
+  userId    String?  // Optional relation to user if the log is associated with a specific user
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([timestamp])
+  @@index([userId])
+  @@index([source])
 }

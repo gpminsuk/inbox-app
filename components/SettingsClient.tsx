@@ -1,8 +1,8 @@
 'use client';
 
-import { signIn } from 'next-auth/react';
 import { useState } from 'react';
 import Image from 'next/image';
+import { signInWithDefaultScope, signInWithGmailScope } from '@/lib/auth-utils';
 
 type Account = {
   id: string;
@@ -15,6 +15,7 @@ type User = {
   name: string | null;
   email: string | null;
   image: string | null;
+  emailPermissionLevel?: string;
   accounts: Account[];
 };
 
@@ -25,24 +26,36 @@ interface SettingsClientProps {
 
 export default function SettingsClient({ user, hasGoogleAccount }: SettingsClientProps) {
   const [isConnecting, setIsConnecting] = useState(false);
-  
+  const [isUpgrading, setIsUpgrading] = useState(false);
+  const [permissionLevel, setPermissionLevel] = useState(user?.emailPermissionLevel || 'read-only');
+
   const handleConnectGmail = async () => {
     setIsConnecting(true);
     try {
-      await signIn('google', {
-        callbackUrl: '/settings',
-        redirect: true,
-      });
+      await signInWithDefaultScope('/settings');
     } catch (error) {
       console.error('Error connecting Gmail:', error);
       setIsConnecting(false);
     }
   };
-  
+
+  const handleUpgradePermissions = async () => {
+    if (!user) return;
+
+    setIsUpgrading(true);
+    try {
+      // Sign in with Google using the higher permission scope
+      await signInWithGmailScope('/settings');
+    } catch (error) {
+      console.error('Error upgrading permissions:', error);
+      setIsUpgrading(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
       <h2 className="text-xl font-semibold text-gray-800 mb-6">Account Settings</h2>
-      
+
       <div className="mb-8">
         <h3 className="text-lg font-medium text-gray-700 mb-3">Profile Information</h3>
         <div className="flex items-center space-x-4">
@@ -65,10 +78,10 @@ export default function SettingsClient({ user, hasGoogleAccount }: SettingsClien
           </div>
         </div>
       </div>
-      
+
       <div className="border-t border-gray-200 pt-6">
         <h3 className="text-lg font-medium text-gray-700 mb-3">Connected Accounts</h3>
-        
+
         <div className="bg-gray-50 p-4 rounded-lg mb-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-3">
@@ -84,7 +97,7 @@ export default function SettingsClient({ user, hasGoogleAccount }: SettingsClien
                 </div>
               </div>
             </div>
-            
+
             {hasGoogleAccount ? (
               <span className="px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full">
                 Connected
@@ -100,12 +113,47 @@ export default function SettingsClient({ user, hasGoogleAccount }: SettingsClien
             )}
           </div>
         </div>
-        
+
+        {hasGoogleAccount && (
+          <div className="bg-gray-50 p-4 rounded-lg mb-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="font-medium">Gmail Permission Level</div>
+                <div className="text-sm text-gray-500">
+                  {permissionLevel === 'read-only'
+                    ? 'Currently read-only (can only read emails)'
+                    : 'Full access (can mark emails as read and compose drafts)'}
+                </div>
+              </div>
+
+              {permissionLevel === 'read-only' ? (
+                <button
+                  onClick={handleUpgradePermissions}
+                  disabled={isUpgrading}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUpgrading ? 'Upgrading...' : 'Upgrade Permissions'}
+                </button>
+              ) : (
+                <span className="px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full">
+                  Full Access
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="text-sm text-gray-500 mt-4">
           <p>
             Connecting your Gmail account allows Inbox App to import your emails and create actionable items from them.
-            We only access the emails you explicitly choose to import.
           </p>
+          {hasGoogleAccount && (
+            <p className="mt-2">
+              <strong>Permission levels:</strong><br />
+              - Read-only: Inbox App can only read your emails to create inbox entries<br />
+              - Full access: Inbox App can read emails, mark them as read, and compose draft emails
+            </p>
+          )}
         </div>
       </div>
     </div>

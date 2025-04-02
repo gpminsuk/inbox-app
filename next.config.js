@@ -1,9 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  experimental: {
-    serverExternalPackages: ['@prisma/client', 'bcrypt'],
-  },
   images: {
     domains: [
       'lh3.googleusercontent.com',
@@ -11,6 +8,7 @@ const nextConfig = {
       'avatars.githubusercontent.com'
     ],
   },
+  allowedDevOrigins: ['http://localhost:3000', 'http://10.0.0.197:3000'],
 };
 
 module.exports = nextConfig;

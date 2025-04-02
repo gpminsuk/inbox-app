@@ -27,7 +27,7 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://gobi.ngrok.app}
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
     depends_on:
       - db
     networks:
@@ -43,7 +43,8 @@ services:
       - DATABASE_URL=postgresql://your-postgres-user:your-postgres-password@db:5432/gobi-inbox?schema=public
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://gobi.ngrok.app}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
       - db
