@@ -368,23 +368,37 @@ async function getSuggestedActions(subject: string, body: string, userId: string
   try {
     if (!process.env.GEMINI_API_KEY) {
       log('Gemini API key not found. Skipping action suggestions.');
-      return ['Reply to email', 'Archive email'];
+      return [];
     }
 
-    // Fetch the user's custom agent prompt if available
+    // Fetch the user's information including name, email, and custom agent prompt
     let customAgentPrompt = '';
+    let userInfo = '';
     try {
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { customAgentPrompt: true }
+        select: {
+          name: true,
+          email: true,
+          customAgentPrompt: true
+        }
       });
 
-      if (user?.customAgentPrompt) {
-        customAgentPrompt = user.customAgentPrompt;
-        log(`Using custom agent prompt for user ${userId}`);
+      if (user) {
+        // Add user's name and email to the prompt if available
+        if (user.name || user.email) {
+          userInfo = `\nUser Information:`;
+          if (user.name) userInfo += `\nName: ${user.name}`;
+          if (user.email) userInfo += `\nEmail: ${user.email}`;
+        }
+
+        if (user.customAgentPrompt) {
+          customAgentPrompt = user.customAgentPrompt;
+          log(`Using custom agent prompt for user ${userId}`);
+        }
       }
     } catch (error) {
-      log(`Error fetching custom agent prompt: ${error instanceof Error ? error.message : String(error)}`, 'warning', userId);
+      log(`Error fetching user information: ${error instanceof Error ? error.message : String(error)}`, 'warning', userId);
     }
 
     // Extract text content from HTML if needed
@@ -397,22 +411,41 @@ async function getSuggestedActions(subject: string, body: string, userId: string
     // Limit content length to avoid token limits
     const truncatedBody = cleanBody.substring(0, 1500);
 
-    // Add custom instructions if available
-    const customInstructions = customAgentPrompt
-      ? `\n\nAdditional Instructions: ${customAgentPrompt}`
+    // Add user information and custom instructions if available
+    const additionalInfo = [userInfo, customAgentPrompt]
+      .filter(Boolean)
+      .join('\n\n');
+
+    const customInstructions = additionalInfo
+      ? `\n\nAdditional Information: ${additionalInfo}`
       : '';
 
     // Create the prompt
-    const prompt = `You are an AI assistant that analyzes emails and suggests potential actions.
-                
+    const prompt = `You are an intelligent email triage assistant.
+
+Your task is to analyze the email content and suggest useful actions that you can take on behalf of the user.
+
+You can perform:
+- Web browsing (no access to login credentials)
+- Unsubscribing from emails (if unsubscribe option is available in the email)
+- Interacting with links or buttons (only if no login is required)
+
+Rules:
+- Use your judgment to determine if the email contains anything valuable or actionable.
+- If the email is not useful or requires credentials you don’t have, respond with no actions.
+- Prioritize clarity, relevance, and user value.
+
+Custom Instructions:
+${customInstructions}
+
 Email Subject: ${subject}
+Email Body: ${truncatedBody}
 
-Email Body: ${truncatedBody}${customInstructions}
+Output Format:
+Return only a valid JSON array of strings.
+Each string must be a specific and concise action you suggest performing.`;
 
-Based on this email content, provide 3-5 specific, actionable tasks in order of priority. Focus on concrete actions like scheduling meetings, responding with specific information, following up on deadlines, etc.
-
-IMPORTANT: Return your response ONLY as a valid JSON array of strings, with each string being a suggested action. For example:
-["Reply to confirm attendance", "Schedule meeting in calendar", "Prepare presentation slides"]`;
+    log(`Prompt: ${prompt}`);
 
     // Generate content with structured format
     const response = await ai.models.generateContent({
@@ -558,13 +591,18 @@ async function main(): Promise<void> {
             }
             log('----------------------------------------');
 
-            // Create inbox entry
-            await createInboxEntry(
-              account.user.id,
-              parsedEmail,
-              suggestedActions,
-              account.user.emailPermissionLevel === 'modify-compose'
-            );
+            if (suggestedActions.length > 0) {
+              // Create inbox entry
+              await createInboxEntry(
+                account.user.id,
+                parsedEmail,
+                suggestedActions,
+                account.user.emailPermissionLevel === 'modify-compose'
+              );
+            }
+            else {
+              log('No suggested actions found for this email.');
+            }
 
             totalProcessedEmails++;
           }

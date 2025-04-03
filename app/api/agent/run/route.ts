@@ -29,10 +29,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Action not found' }, { status: 404 });
     }
 
-    // Fetch the user's custom agent prompt
+    // Fetch the user's information including name, email, and custom agent prompt
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { customAgentPrompt: true }
+      select: { 
+        name: true,
+        email: true,
+        customAgentPrompt: true 
+      }
     });
 
     // Create a log entry for this agent action
@@ -66,6 +70,10 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           prompt, // Send the original prompt
           customPrompt: user?.customAgentPrompt, // Send the custom prompt separately
+          userInfo: {
+            name: user?.name,
+            email: user?.email
+          },
           timeout: 120, // 2 minutes timeout
           actionId // Pass the actionId to the agent server
         }),

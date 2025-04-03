@@ -82,11 +82,34 @@ def run_agent():
         # Get custom prompt if available
         custom_prompt = data.get('customPrompt')
         
-        # Create final prompt with custom instructions if available
+        # Get user information if available
+        user_info = data.get('userInfo', {})
+        user_name = user_info.get('name')
+        user_email = user_info.get('email')
+        
+        # Create user info section if available
+        user_info_text = ""
+        if user_name or user_email:
+            user_info_text = "User Information:"
+            if user_name:
+                user_info_text += f"\nName: {user_name}"
+            if user_email:
+                user_info_text += f"\nEmail: {user_email}"
+        
+        # Create final prompt with custom instructions and user info if available
         final_prompt = prompt
+        additional_info = []
+        
+        if user_info_text:
+            additional_info.append(user_info_text)
+            
         if custom_prompt:
-            final_prompt = f"{prompt}\n\nAdditional Instructions: {custom_prompt}"
+            additional_info.append(custom_prompt)
             logger.info(f"Using custom prompt for agent task: {custom_prompt[:100]}...")
+        
+        if additional_info:
+            additional_text = "\n\n".join(additional_info)
+            final_prompt = f"{prompt}\n\nAdditional Instructions: {additional_text}"
         
         logger.info(f"Starting async agent with prompt: {final_prompt[:100]}..., actionId: {action_id}")
         
@@ -121,7 +144,7 @@ def run_agent():
         async def async_agent_run():
             try:
                 # Run the browser task
-                result = await agent.run(max_steps=3)
+                result = await agent.run(max_steps=10)
                 print("Agent result:", result)
                 return result
             except Exception as e:
@@ -165,11 +188,7 @@ def run_agent():
                 }
                 
                 # Update the action status in the database
-                try:
-                    # Debug log to inspect the actual structure
-                    logger.info(f"Result type: {type(result)}")
-                    logger.info(f"Result dir: {dir(result)}")
-                    
+                try:                    
                     # Convert result to a structured JSON based on the actual structure
                     # The AgentHistoryList object has different attributes than expected
                     # Check if it's a string representation or an object with attributes

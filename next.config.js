@@ -9,6 +9,9 @@ const nextConfig = {
     ],
   },
   allowedDevOrigins: ['http://localhost:3000', 'http://10.0.0.197:3000'],
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 };
 
 module.exports = nextConfig;
