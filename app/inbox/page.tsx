@@ -3,6 +3,7 @@ import { authOptions } from '../api/auth/[...nextauth]/options';
 import { redirect } from 'next/navigation';
 import InboxClient from '@/components/InboxClient';
 import prisma from '@/lib/prisma';
+import { InboxEntry, Action } from '@/types';
 
 export default async function InboxPage() {
   const session = await getServerSession(authOptions);
@@ -12,7 +13,7 @@ export default async function InboxPage() {
   }
 
   // Fetch inbox entries for the current user
-  const entries = await prisma.inboxEntry.findMany({
+  const rawEntries = await prisma.inboxEntry.findMany({
     where: {
       userId: session.user.id,
     },
@@ -23,6 +24,15 @@ export default async function InboxPage() {
       createdAt: 'desc',
     },
   });
+
+  // Transform the raw entries to match the expected InboxEntry type
+  const entries: InboxEntry[] = rawEntries.map(entry => ({
+    ...entry,
+    actions: entry.actions.map(action => ({
+      ...action,
+      metadata: action.metadata as Action['metadata']
+    }))
+  }));
 
   return (
     <div className="max-w-6xl mx-auto">

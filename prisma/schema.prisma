@@ -49,6 +49,7 @@ model User {
   emailVerified       DateTime?
   image               String?
   emailPermissionLevel String    @default("read-only") // Options: "read-only" or "modify-compose"
+  customAgentPrompt   String?   // Custom prompt to include in agent workflows
   lastEmailProcessedAt DateTime? // Timestamp of the last processed email
   accounts            Account[]
   sessions            Session[]

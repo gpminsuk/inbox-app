@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import EntryCard from './EntryCard';
-import { InboxEntry, Action, AgentHistoryList, AgentActionResult, AgentModelOutput } from '@/types';
+import { InboxEntry, Action, AgentHistoryList, AgentActionResult } from '@/types';
 
 type InboxClientProps = {
   initialEntries: InboxEntry[];
@@ -13,6 +13,7 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
   const [entries, setEntries] = useState<InboxEntry[]>(initialEntries);
   const [loading, setLoading] = useState(false);
   const [pollingActions, setPollingActions] = useState<string[]>([]);
+  const [customAgentPrompt, setCustomAgentPrompt] = useState<string>('');
   const router = useRouter();
 
   // Fetch entries on component mount
@@ -20,20 +21,23 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
     if (initialEntries.length === 0) {
       fetchEntries();
     }
-  }, []);
 
-  // Poll for action status updates
-  useEffect(() => {
-    if (pollingActions.length === 0) return;
+    // Fetch the user's custom agent prompt
+    fetchCustomAgentPrompt();
+  }, [initialEntries.length]);
 
-    const intervalId = setInterval(() => {
-      pollingActions.forEach(actionId => {
-        checkActionStatus(actionId);
-      });
-    }, 3000); // Poll every 3 seconds
-
-    return () => clearInterval(intervalId);
-  }, [pollingActions]);
+  // Fetch the user's custom agent prompt from settings
+  const fetchCustomAgentPrompt = async () => {
+    try {
+      const response = await fetch('/api/settings/agent-prompt');
+      if (response.ok) {
+        const data = await response.json();
+        setCustomAgentPrompt(data.customAgentPrompt || '');
+      }
+    } catch (error) {
+      console.error('Error fetching custom agent prompt:', error);
+    }
+  };
 
   const fetchEntries = async () => {
     try {
@@ -64,37 +68,51 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
     }
   };
 
-  const checkActionStatus = async (actionId: string) => {
-    try {
-      const response = await fetch(`/api/agent/run?actionId=${actionId}`);
-      if (!response.ok) {
-        return;
+  // Poll for action status updates
+  useEffect(() => {
+
+    const checkActionStatus = async (actionId: string) => {
+      try {
+        const response = await fetch(`/api/agent/run?actionId=${actionId}`);
+        if (!response.ok) {
+          return;
+        }
+
+        const actionData = await response.json();
+
+        // If the action is no longer running, update it and remove from polling
+        if (actionData.metadata?.agentStatus !== 'running') {
+          // Update the entries state with the updated action
+          setEntries(entries.map(entry => {
+            if (entry.actions.some(action => action.id === actionId)) {
+              return {
+                ...entry,
+                actions: entry.actions.map(action =>
+                  action.id === actionId ? { ...action, ...actionData } : action
+                )
+              };
+            }
+            return entry;
+          }));
+
+          // Remove from polling list
+          setPollingActions(prev => prev.filter(id => id !== actionId));
+        }
+      } catch (error) {
+        console.error('Error checking action status:', error);
       }
+    };
 
-      const actionData = await response.json();
+    if (pollingActions.length === 0) return;
 
-      // If the action is no longer running, update it and remove from polling
-      if (actionData.metadata?.agentStatus !== 'running') {
-        // Update the entries state with the updated action
-        setEntries(entries.map(entry => {
-          if (entry.actions.some(action => action.id === actionId)) {
-            return {
-              ...entry,
-              actions: entry.actions.map(action =>
-                action.id === actionId ? { ...action, ...actionData } : action
-              )
-            };
-          }
-          return entry;
-        }));
+    const intervalId = setInterval(() => {
+      pollingActions.forEach(actionId => {
+        checkActionStatus(actionId);
+      });
+    }, 3000); // Poll every 3 seconds
 
-        // Remove from polling list
-        setPollingActions(prev => prev.filter(id => id !== actionId));
-      }
-    } catch (error) {
-      console.error('Error checking action status:', error);
-    }
-  };
+    return () => clearInterval(intervalId);
+  }, [pollingActions, entries]);
 
   const handleDeleteEntry = async (entryId: string) => {
     try {
@@ -184,12 +202,17 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
         throw new Error('Entry not found');
       }
 
+      // Include the custom agent prompt if available
+      const customInstructions = customAgentPrompt
+        ? `\n\nAdditional Instructions: ${customAgentPrompt}`
+        : '';
+
       const prompt = `Please help me with the following task related to an email:
       
 Task: ${actionDescription}
 
 Email Subject: ${entry.title}
-Email Content: ${entry.content.substring(0, 500)}${entry.content.length > 500 ? '...' : ''}
+Email Content: ${entry.content.substring(0, 500)}${entry.content.length > 500 ? '...' : ''}${customInstructions}
 
 Please complete this task and provide a detailed summary of what you did.`;
 
@@ -295,8 +318,29 @@ Please complete this task and provide a detailed summary of what you did.`;
         );
       }
 
+      // Check if there's a recording file in the agent result
+      const recordingFile = agentResult.recordingFile || 
+                           (action.metadata as any)?.recordingFile;
+
       return (
         <div className="mt-2 text-sm">
+          {/* Display recording if available */}
+          {recordingFile && (
+            <div className="mb-4">
+              <h4 className="font-semibold text-gray-900 mb-2">Agent Recording:</h4>
+              <div className="relative aspect-video bg-gray-100 rounded overflow-hidden">
+                <video 
+                  controls 
+                  className="w-full h-full"
+                  src={recordingFile}
+                  poster="/window.svg"
+                >
+                  Your browser does not support the video tag.
+                </video>
+              </div>
+            </div>
+          )}
+          
           <h4 className="font-semibold text-gray-900">Agent Actions:</h4>
           <div className="space-y-2 mt-1">
             {agentResult.all_results.map((result: AgentActionResult, index: number) => (

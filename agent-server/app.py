@@ -18,6 +18,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from db import update_action_status, create_log_entry
 import datetime
+import pathlib
 
 api_key = os.getenv("GEMINI_API_KEY")
 
@@ -39,6 +40,12 @@ CORS(app)  # Enable CORS for all routes
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 agent_tasks = {}
 
+# Path to save recordings - using a relative path that's resolved to an absolute path
+# This ensures it works regardless of the current working directory
+current_dir = pathlib.Path(__file__).parent.absolute()
+nextjs_public_dir = os.path.abspath(os.path.join(current_dir, "..", "public", "recordings"))
+RECORDINGS_PATH = os.getenv("RECORDINGS_PATH", nextjs_public_dir)
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint"""
@@ -52,6 +59,7 @@ def run_agent():
     Expected JSON payload:
     {
         "prompt": "The task to perform",
+        "customPrompt": "Optional custom agent prompt",
         "url": "Optional starting URL",
         "timeout": 60,  # Optional timeout in seconds
         "actionId": "Required action ID to update when completed"
@@ -71,28 +79,41 @@ def run_agent():
         prompt = data['prompt']
         action_id = data['actionId']
         
-        logger.info(f"Starting async agent with prompt: {prompt}, actionId: {action_id}")
+        # Get custom prompt if available
+        custom_prompt = data.get('customPrompt')
+        
+        # Create final prompt with custom instructions if available
+        final_prompt = prompt
+        if custom_prompt:
+            final_prompt = f"{prompt}\n\nAdditional Instructions: {custom_prompt}"
+            logger.info(f"Using custom prompt for agent task: {custom_prompt[:100]}...")
+        
+        logger.info(f"Starting async agent with prompt: {final_prompt[:100]}..., actionId: {action_id}")
+        
+        # Create a unique recording directory for this task
+        import uuid
+        task_id = str(uuid.uuid4())
+        recording_dir = os.path.join(RECORDINGS_PATH, task_id)
+        
+        # Ensure the recording directory exists
+        os.makedirs(recording_dir, exist_ok=True)
         
         # Create agent with the model
         agent = Agent(
-            task=prompt,
+            task=final_prompt,
             llm=ChatGoogleGenerativeAI(model='gemini-2.0-flash-exp', api_key=SecretStr(os.getenv('GEMINI_API_KEY'))),
             browser=Browser(
                 config=BrowserConfig(
                     headless=True,
-                    new_context_config=BrowserContextConfig(save_recording_path='./tmp/recordings'),
+                    new_context_config=BrowserContextConfig(save_recording_path=recording_dir),
                 )
             ),
         )
         
-        # Generate a task ID
-        import uuid
-        task_id = str(uuid.uuid4())
-        
         # Update action status to running if action_id is provided
         update_action_status(action_id, "running")
         create_log_entry(
-            f"Agent task started for action {action_id} with prompt: {prompt}",
+            f"Agent task started for action {action_id} with prompt: {prompt[:100]}...",
             level="info"
         )
         
@@ -100,7 +121,8 @@ def run_agent():
         async def async_agent_run():
             try:
                 # Run the browser task
-                result = await agent.run()
+                result = await agent.run(max_steps=3)
+                print("Agent result:", result)
                 return result
             except Exception as e:
                 logger.error(f"Error in async agent run: {str(e)}", exc_info=True)
@@ -118,12 +140,28 @@ def run_agent():
                 
                 logger.info(f"Agent task {task_id} completed with result: {result}")
                 
+                # Find all recording files in the recording directory
+                recording_files = []
+                recording_file = None
+                if os.path.exists(recording_dir):
+                    for root, dirs, files in os.walk(recording_dir):
+                        for file in files:
+                            if file.endswith(('.webm', '.mp4')):
+                                # Get the relative path from the public directory
+                                recording_file = os.path.join('/recordings', task_id, file)
+                                break
+                        if recording_file:
+                            break
+                
+                logger.info(f"Found recording file: {recording_file}")
+                
                 # Store the result in our tasks dictionary
                 agent_tasks[task_id] = {
                     "status": "completed",
                     "result": result,
-                    "prompt": prompt,
-                    "actionId": action_id
+                    "prompt": final_prompt,
+                    "actionId": action_id,
+                    "recordingFile": recording_file  # Add recording file to result
                 }
                 
                 # Update the action status in the database
@@ -149,7 +187,8 @@ def run_agent():
                             "all_model_outputs": [
                                 {k: (v if not isinstance(v, (dict, list)) else v) for k, v in output.items()}
                                 for output in result.all_model_outputs
-                            ]
+                            ],
+                            "recordingFile": recording_file  # Add recording file to result
                         }
                     else:
                         # If the result doesn't have the expected structure, 
@@ -211,7 +250,8 @@ def run_agent():
                             
                             structured_result = {
                                 "all_results": all_results,
-                                "all_model_outputs": all_outputs
+                                "all_model_outputs": all_outputs,
+                                "recordingFile": recording_file  # Add recording file to result
                             }
                         else:
                             # Fallback for unexpected format
@@ -227,7 +267,8 @@ def run_agent():
                                 ],
                                 "all_model_outputs": [
                                     {"output": "Agent completed task"}
-                                ]
+                                ],
+                                "recordingFile": recording_file  # Add recording file to result
                             }
                     
                     # Convert to JSON string for storage
@@ -260,7 +301,7 @@ def run_agent():
                 agent_tasks[task_id] = {
                     "status": "error",
                     "error": str(e),
-                    "prompt": prompt,
+                    "prompt": final_prompt,
                     "actionId": action_id
                 }
                 
@@ -295,8 +336,9 @@ def run_agent():
         # Start the task in background
         agent_tasks[task_id] = {
             "status": "running", 
-            "prompt": prompt,
-            "actionId": action_id
+            "prompt": final_prompt,
+            "actionId": action_id,
+            "recordingFile": None  # Initialize recording file to None
         }
         executor.submit(run_agent_task)
         
@@ -305,8 +347,9 @@ def run_agent():
             "success": True,
             "task_id": task_id,
             "status": "running",
-            "prompt": prompt,
-            "actionId": action_id
+            "prompt": final_prompt,
+            "actionId": action_id,
+            "recordingFile": None  # Return None for recording file
         }), 202
         
     except Exception as e:
@@ -335,7 +378,8 @@ def get_action_status(action_id):
                 "task_id": task_id,
                 "status": task_info.get('status', 'unknown'),
                 "result": task_info.get('result', None) if task_info.get('status') == 'completed' else None,
-                "error": task_info.get('error', None) if task_info.get('status') == 'error' else None
+                "error": task_info.get('error', None) if task_info.get('status') == 'error' else None,
+                "recordingFile": task_info.get('recordingFile', None)
             }), 200
     
     # If no task is found for this action
@@ -344,6 +388,10 @@ def get_action_status(action_id):
 if __name__ == '__main__':
     # Get port from environment variable or default to 8080
     port = int(os.environ.get('PORT', 8080))
+    
+    # Ensure the recordings directory exists
+    os.makedirs(RECORDINGS_PATH, exist_ok=True)
+    logger.info(f"Recordings will be saved to: {RECORDINGS_PATH}")
     
     # Run the Flask app
     app.run(host='0.0.0.0', port=port, debug=os.environ.get('FLASK_DEBUG', 'False').lower() == 'true')

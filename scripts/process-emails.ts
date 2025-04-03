@@ -364,11 +364,27 @@ interface GeminiResponse {
 }
 
 // Function to get suggested actions from Gemini
-async function getSuggestedActions(subject: string, body: string): Promise<string[]> {
+async function getSuggestedActions(subject: string, body: string, userId: string): Promise<string[]> {
   try {
     if (!process.env.GEMINI_API_KEY) {
       log('Gemini API key not found. Skipping action suggestions.');
       return ['Reply to email', 'Archive email'];
+    }
+
+    // Fetch the user's custom agent prompt if available
+    let customAgentPrompt = '';
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { customAgentPrompt: true }
+      });
+
+      if (user?.customAgentPrompt) {
+        customAgentPrompt = user.customAgentPrompt;
+        log(`Using custom agent prompt for user ${userId}`);
+      }
+    } catch (error) {
+      log(`Error fetching custom agent prompt: ${error instanceof Error ? error.message : String(error)}`, 'warning', userId);
     }
 
     // Extract text content from HTML if needed
@@ -381,12 +397,17 @@ async function getSuggestedActions(subject: string, body: string): Promise<strin
     // Limit content length to avoid token limits
     const truncatedBody = cleanBody.substring(0, 1500);
 
+    // Add custom instructions if available
+    const customInstructions = customAgentPrompt
+      ? `\n\nAdditional Instructions: ${customAgentPrompt}`
+      : '';
+
     // Create the prompt
     const prompt = `You are an AI assistant that analyzes emails and suggests potential actions.
                 
 Email Subject: ${subject}
 
-Email Body: ${truncatedBody}
+Email Body: ${truncatedBody}${customInstructions}
 
 Based on this email content, provide 3-5 specific, actionable tasks in order of priority. Focus on concrete actions like scheduling meetings, responding with specific information, following up on deadlines, etc.
 
@@ -520,7 +541,7 @@ async function main(): Promise<void> {
             }
 
             // Get suggested actions from Gemini
-            const suggestedActions = await getSuggestedActions(parsedEmail.subject, parsedEmail.body);
+            const suggestedActions = await getSuggestedActions(parsedEmail.subject, parsedEmail.body, account.user.id);
 
             // Print email details
             log('----------------------------------------');

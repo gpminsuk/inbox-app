@@ -12,6 +12,7 @@ export type Action = {
     agentResult?: string;
     agentError?: string;
     agentTaskId?: string;
+    recordingFile?: string; // Path to browser recording
   };
 };
 
@@ -43,4 +44,5 @@ export type AgentModelOutput = {
 export type AgentHistoryList = {
   all_results: AgentActionResult[];
   all_model_outputs: AgentModelOutput[];
+  recordingFile?: string; // Path to browser recording
 };

@@ -16,6 +16,7 @@ type User = {
   email: string | null;
   image: string | null;
   emailPermissionLevel?: string;
+  customAgentPrompt?: string | null;
   accounts: Account[];
 };
 
@@ -28,6 +29,9 @@ export default function SettingsClient({ user, hasGoogleAccount }: SettingsClien
   const [isConnecting, setIsConnecting] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [permissionLevel] = useState(user?.emailPermissionLevel || 'read-only');
+  const [customPrompt, setCustomPrompt] = useState(user?.customAgentPrompt || '');
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+  const [promptSaved, setPromptSaved] = useState(false);
 
   const handleConnectGmail = async () => {
     setIsConnecting(true);
@@ -49,6 +53,34 @@ export default function SettingsClient({ user, hasGoogleAccount }: SettingsClien
     } catch (error) {
       console.error('Error upgrading permissions:', error);
       setIsUpgrading(false);
+    }
+  };
+
+  const handleSavePrompt = async () => {
+    if (!user) return;
+
+    setIsSavingPrompt(true);
+    setPromptSaved(false);
+
+    try {
+      const response = await fetch('/api/settings/agent-prompt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: customPrompt }),
+      });
+
+      if (response.ok) {
+        setPromptSaved(true);
+        setTimeout(() => setPromptSaved(false), 3000); // Hide success message after 3 seconds
+      } else {
+        console.error('Failed to save custom prompt');
+      }
+    } catch (error) {
+      console.error('Error saving custom prompt:', error);
+    } finally {
+      setIsSavingPrompt(false);
     }
   };
 
@@ -154,6 +186,52 @@ export default function SettingsClient({ user, hasGoogleAccount }: SettingsClien
               - Full access: Inbox App can read emails, mark them as read, and compose draft emails
             </p>
           )}
+        </div>
+      </div>
+
+      {/* Custom Agent Prompt Section */}
+      <div className="border-t border-gray-200 pt-6 mt-6">
+        <h3 className="text-lg font-medium text-gray-700 mb-3">Agent Settings</h3>
+
+        <div className="bg-gray-50 p-4 rounded-lg mb-4">
+          <div className="mb-2">
+            <label htmlFor="customPrompt" className="block font-medium text-gray-700 mb-1">
+              Custom Agent Prompt
+            </label>
+            <p className="text-sm text-gray-500 mb-3">
+              This text will be added to agent workflows when actions are generated. Use this to give the agent specific instructions or context.
+            </p>
+            <textarea
+              id="customPrompt"
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              placeholder="E.g., Always be professional and concise. Prioritize clarity in your responses."
+              className="w-full p-3 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 min-h-[120px] text-gray-900"
+            />
+          </div>
+
+          <div className="flex items-center mt-3">
+            <button
+              onClick={handleSavePrompt}
+              disabled={isSavingPrompt}
+              className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSavingPrompt ? 'Saving...' : 'Save Custom Prompt'}
+            </button>
+
+            {promptSaved && (
+              <span className="ml-3 text-green-600 text-sm">
+                ✓ Prompt saved successfully
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="text-sm text-gray-500 mt-2">
+          <p>
+            Your custom prompt will be included when the agent generates actions for your inbox entries.
+            This can help guide the agent to follow your preferences and communication style.
+          </p>
         </div>
       </div>
     </div>

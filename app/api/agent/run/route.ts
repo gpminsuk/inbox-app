@@ -29,13 +29,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Action not found' }, { status: 404 });
     }
 
+    // Fetch the user's custom agent prompt
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { customAgentPrompt: true }
+    });
+
     // Create a log entry for this agent action
     await prisma.log.create({
       data: {
-        message: `Requesting agent to run for action: ${action.description}`,
+        message: `Requesting agent to run for action: ${action.description}${user?.customAgentPrompt ? ' (with custom prompt)' : ''}`,
         level: 'info',
         source: 'next-api',
         userId: session.user.id
+      }
+    });
+
+    // Update the action status to "running" in the database before calling the agent server
+    // This ensures the UI immediately shows the action as running
+    await prisma.action.update({
+      where: { id: actionId },
+      data: {
+        metadata: {
+          ...(action.metadata as any || {}),
+          agentStatus: 'running'
+        }
       }
     });
 
@@ -46,7 +64,8 @@ export async function POST(req: NextRequest) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt,
+          prompt, // Send the original prompt
+          customPrompt: user?.customAgentPrompt, // Send the custom prompt separately
           timeout: 120, // 2 minutes timeout
           actionId // Pass the actionId to the agent server
         }),
@@ -59,15 +78,43 @@ export async function POST(req: NextRequest) {
 
       const agentResult = await agentResponse.json();
 
+      // Update the action in the database with the recording file
+      if (agentResult.recordingFile) {
+        await prisma.action.update({
+          where: { id: actionId },
+          data: {
+            metadata: {
+              ...(action.metadata as any || {}),
+              agentStatus: 'running', // Ensure the status is still running
+              recordingFile: agentResult.recordingFile
+            }
+          }
+        });
+      }
+
       // Return the result immediately - the agent server will handle updating the action
       return NextResponse.json({
         success: true,
         taskId: agentResult.task_id,
         status: agentResult.status,
-        actionId
+        actionId,
+        recordingFile: agentResult.recordingFile
       });
     } catch (error) {
       console.error('Error running agent:', error);
+
+      // If there's an error, update the action status to "error"
+      await prisma.action.update({
+        where: { id: actionId },
+        data: {
+          metadata: {
+            ...(action.metadata as any || {}),
+            agentStatus: 'error',
+            agentError: error instanceof Error ? error.message : 'An unknown error occurred'
+          }
+        }
+      });
+
       return NextResponse.json(
         { error: error instanceof Error ? error.message : 'An unknown error occurred' },
         { status: 500 }
