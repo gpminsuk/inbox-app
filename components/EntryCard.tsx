@@ -90,54 +90,61 @@ export default function EntryCard({ entry, onDelete, onUpdateAction, onExecuteAc
             <div className="bg-gray-50 p-3 rounded">
               {entry.actions.slice(0, expanded ? entry.actions.length : 2).map(action => (
                 <div key={action.id} className="flex flex-col py-1">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={action.completed}
-                      onChange={() => onUpdateAction(action.id, { completed: !action.completed })}
-                      className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                    />
-                    <span className={`ml-2 text-sm ${action.completed ? 'line-through text-gray-400' : 'text-gray-700'}`}>
-                      {action.description}
-                    </span>
-                    {action.dueDate && (
-                      <span className="ml-auto text-xs text-gray-500">
-                        Due: {format(action.dueDate, 'MMM d, yyyy')}
-                      </span>
-                    )}
-                    <div className="ml-auto flex space-x-2 items-center">
-                      {action.metadata?.agentStatus && (
-                        <button
-                          onClick={() => toggleActionDetails(action.id)}
-                          className={`text-xs px-2 py-1 rounded ${action.metadata.agentStatus === 'running'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : action.metadata.agentStatus === 'completed'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                            }`}
-                        >
-                          {action.metadata.agentStatus === 'running' && 'Running...'}
-                          {action.metadata.agentStatus === 'completed' && 'Completed'}
-                          {action.metadata.agentStatus === 'error' && 'Error'}
-                        </button>
-                      )}
-                      {!action.completed && !action.metadata?.agentStatus && (
-                        <button
-                          onClick={() => onExecuteAction(action.id)}
-                          className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
-                        >
-                          Execute
-                        </button>
-                      )}
-                      {!action.completed && action.metadata?.agentStatus === 'error' && (
-                        <button
-                          onClick={() => onExecuteAction(action.id)}
-                          className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
-                        >
-                          Retry
-                        </button>
-                      )}
+                  <div className="flex flex-col w-full">
+                    <div className="flex items-center w-full justify-between">
+                      <div className="flex items-center flex-grow min-w-0 mr-2">
+                        <input
+                          type="checkbox"
+                          checked={action.completed}
+                          onChange={() => onUpdateAction(action.id, { completed: !action.completed })}
+                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded flex-shrink-0"
+                        />
+                        <span className={`ml-2 text-sm ${action.completed ? 'line-through text-gray-400' : 'text-gray-700'} truncate max-w-full`}>
+                          {action.description}
+                        </span>
+                      </div>
+                      <div className="flex-shrink-0 flex space-x-2 items-center">
+                        {action.metadata?.agentStatus && (
+                          <button
+                            onClick={() => toggleActionDetails(action.id)}
+                            className={`text-xs px-2 py-1 rounded whitespace-nowrap ${action.metadata.agentStatus === 'running'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : action.metadata.agentStatus === 'completed'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-red-100 text-red-800'
+                              }`}
+                          >
+                            {action.metadata.agentStatus === 'running' && 'Running...'}
+                            {action.metadata.agentStatus === 'completed' && 'Completed'}
+                            {action.metadata.agentStatus === 'error' && 'Error'}
+                          </button>
+                        )}
+                        {!action.completed && !action.metadata?.agentStatus && (
+                          <button
+                            onClick={() => onExecuteAction(action.id)}
+                            className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                          >
+                            Execute
+                          </button>
+                        )}
+                        {!action.completed && action.metadata?.agentStatus === 'error' && (
+                          <button
+                            onClick={() => onExecuteAction(action.id)}
+                            className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors whitespace-nowrap"
+                          >
+                            Retry
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {action.dueDate && (
+                      <div className="mt-1 ml-6">
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                          Due: {format(action.dueDate, 'MMM d, yyyy')}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Display agent result or error when expanded */}

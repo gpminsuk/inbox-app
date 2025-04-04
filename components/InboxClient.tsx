@@ -212,7 +212,7 @@ export default function InboxClient({ initialEntries }: InboxClientProps) {
 Task: ${actionDescription}
 
 Email Subject: ${entry.title}
-Email Content: ${entry.content.substring(0, 500)}${entry.content.length > 500 ? '...' : ''}${customInstructions}
+Email Content: ${entry.content}${customInstructions}
 
 Please complete this task and provide a detailed summary of what you did.`;
 
@@ -319,8 +319,8 @@ Please complete this task and provide a detailed summary of what you did.`;
       }
 
       // Check if there's a recording file in the agent result
-      const recordingFile = agentResult.recordingFile || 
-                           (action.metadata as any)?.recordingFile;
+      const recordingFile = agentResult.recordingFile ||
+        (action.metadata as any)?.recordingFile;
 
       return (
         <div className="mt-2 text-sm">
@@ -329,8 +329,8 @@ Please complete this task and provide a detailed summary of what you did.`;
             <div className="mb-4">
               <h4 className="font-semibold text-gray-900 mb-2">Agent Recording:</h4>
               <div className="relative aspect-video bg-gray-100 rounded overflow-hidden">
-                <video 
-                  controls 
+                <video
+                  controls
                   className="w-full h-full"
                   src={recordingFile}
                   poster="/window.svg"
@@ -340,7 +340,7 @@ Please complete this task and provide a detailed summary of what you did.`;
               </div>
             </div>
           )}
-          
+
           <h4 className="font-semibold text-gray-900">Agent Actions:</h4>
           <div className="space-y-2 mt-1">
             {agentResult.all_results.map((result: AgentActionResult, index: number) => (
@@ -362,6 +362,46 @@ Please complete this task and provide a detailed summary of what you did.`;
               </div>
             ))}
           </div>
+
+          {agentResult.all_model_outputs && agentResult.all_model_outputs.length > 0 && (
+            <>
+              <h4 className="font-semibold text-gray-900 mt-4">Model Outputs:</h4>
+              <div className="space-y-2 mt-1">
+                {agentResult.all_model_outputs.map((output: any, index: number) => (
+                  <div key={index} className="p-2 rounded bg-blue-50 border border-blue-200">
+                    {output.go_to_url && (
+                      <div className="font-medium text-gray-900">
+                        Go to URL: {output.go_to_url.url}
+                      </div>
+                    )}
+                    {output.extract_content && (
+                      <div className="font-medium text-gray-900">
+                        Extract content: {output.extract_content.goal}
+                      </div>
+                    )}
+                    {output.done && (
+                      <div className="font-medium text-gray-900">
+                        Done: {output.done.text}
+                        <div className="text-sm mt-1">
+                          Success: {output.done.success ? 'Yes' : 'No'}
+                        </div>
+                      </div>
+                    )}
+                    {output.interacted_element && (
+                      <div className="font-medium text-gray-900">
+                        Interacted with element: {JSON.stringify(output.interacted_element)}
+                      </div>
+                    )}
+                    {!output.go_to_url && !output.extract_content && !output.done && !output.interacted_element && (
+                      <div className="font-medium text-gray-900">
+                        {JSON.stringify(output, null, 2)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       );
     } catch (error) {

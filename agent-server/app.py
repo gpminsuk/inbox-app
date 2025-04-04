@@ -177,121 +177,26 @@ def run_agent():
                             break
                 
                 logger.info(f"Found recording file: {recording_file}")
-                
+                      
                 # Store the result in our tasks dictionary
                 agent_tasks[task_id] = {
                     "status": "completed",
-                    "result": result,
                     "prompt": final_prompt,
                     "actionId": action_id,
                     "recordingFile": recording_file  # Add recording file to result
                 }
-                
+
                 # Update the action status in the database
                 try:                    
-                    # Convert result to a structured JSON based on the actual structure
-                    # The AgentHistoryList object has different attributes than expected
-                    # Check if it's a string representation or an object with attributes
-                    if hasattr(result, 'all_results'):
-                        structured_result = {
-                            "all_results": [
-                                {
-                                    "is_done": r.is_done,
-                                    "success": r.success,
-                                    "extracted_content": r.extracted_content,
-                                    "error": r.error,
-                                    "include_in_memory": r.include_in_memory
-                                } for r in result.all_results
-                            ],
-                            "all_model_outputs": [
-                                {k: (v if not isinstance(v, (dict, list)) else v) for k, v in output.items()}
-                                for output in result.all_model_outputs
-                            ],
-                            "recordingFile": recording_file  # Add recording file to result
-                        }
-                    else:
-                        # If the result doesn't have the expected structure, 
-                        # create a structured representation based on what's available
-                        logger.info(f"Using alternate structure for result")
-                        
-                        # Convert the result to a string and parse it
-                        result_str = str(result)
-                        
-                        # Check if it's the expected format with all_results
-                        if "all_results=" in result_str:
-                            # Extract action results using regex
-                            import re
-                            all_results_match = re.search(r'all_results=\[(.*?)\]', result_str, re.DOTALL)
-                            all_results = []
-                            
-                            if all_results_match:
-                                action_results = re.finditer(r'ActionResult\((.*?)\)', all_results_match.group(1), re.DOTALL)
-                                for action_match in action_results:
-                                    action_str = action_match.group(1)
-                                    
-                                    # Extract individual properties
-                                    is_done_match = re.search(r'is_done=(.*?),', action_str)
-                                    success_match = re.search(r'success=(.*?),', action_str)
-                                    content_match = re.search(r'extracted_content=(.*?),', action_str)
-                                    error_match = re.search(r'error=(.*?),', action_str)
-                                    memory_match = re.search(r'include_in_memory=(.*?)(?:,|\))', action_str)
-                                    
-                                    all_results.append({
-                                        "is_done": is_done_match and is_done_match.group(1) == 'True',
-                                        "success": None if not success_match or success_match.group(1) == 'None' 
-                                                  else success_match.group(1) == 'True',
-                                        "extracted_content": None if not content_match or content_match.group(1) == 'None'
-                                                           else content_match.group(1).strip("'"),
-                                        "error": None if not error_match or error_match.group(1) == 'None'
-                                               else error_match.group(1).strip("'"),
-                                        "include_in_memory": memory_match and memory_match.group(1) == 'True'
-                                    })
-                            
-                            # Extract model outputs
-                            all_outputs_match = re.search(r'all_model_outputs=\[(.*?)\]', result_str, re.DOTALL)
-                            all_outputs = []
-                            
-                            if all_outputs_match:
-                                # This is complex to parse, so we'll create a simplified representation
-                                outputs_str = all_outputs_match.group(1)
-                                # Try to clean up the string for JSON parsing
-                                outputs_str = outputs_str.replace("'", '"').replace('None', 'null')
-                                outputs_str = outputs_str.replace('True', 'true').replace('False', 'false')
-                                
-                                try:
-                                    # Try to parse as JSON
-                                    import json
-                                    all_outputs = json.loads(f"[{outputs_str}]")
-                                except json.JSONDecodeError:
-                                    # If parsing fails, create a simple representation
-                                    logger.warning("Failed to parse model outputs as JSON")
-                                    all_outputs = [{"output": f"Model output {i+1}"} for i in range(len(all_results))]
-                            
-                            structured_result = {
-                                "all_results": all_results,
-                                "all_model_outputs": all_outputs,
-                                "recordingFile": recording_file  # Add recording file to result
-                            }
-                        else:
-                            # Fallback for unexpected format
-                            structured_result = {
-                                "all_results": [
-                                    {
-                                        "is_done": True,
-                                        "success": True,
-                                        "extracted_content": str(result),
-                                        "error": None,
-                                        "include_in_memory": True
-                                    }
-                                ],
-                                "all_model_outputs": [
-                                    {"output": "Agent completed task"}
-                                ],
-                                "recordingFile": recording_file  # Add recording file to result
-                            }
-                    
                     # Convert to JSON string for storage
-                    result_json = json.dumps(structured_result)
+                    result = result.model_dump()
+
+                    for history in result['history']:
+                        del history['state']['screenshot']
+
+                    agent_tasks[task_id]['result'] = result
+                    
+                    result_json = json.dumps(agent_tasks[task_id])
                     
                     # Update the action status in the database
                     update_success = update_action_status(
